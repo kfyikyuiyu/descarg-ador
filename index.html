@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VidBajar — Descargar videos de TikTok, YouTube y más</title>
+<style>
+:root{--p:#5b3df5;--m:#c91cff;--ink:#1c2447;--bg:#f1f1f6;--mut:#6b7190;--line:#e6e6f0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,"Segoe UI",Arial,sans-serif}
+header{background:#fff;padding:14px 24px;font-weight:800;font-size:1.25rem;display:flex;align-items:center;gap:10px}
+header i{display:grid;place-items:center;width:32px;height:32px;border-radius:7px;background:var(--p);color:#fff;font-style:normal}
+.hero{background:linear-gradient(90deg,var(--p),var(--m));padding:38px 16px 46px;text-align:center}
+h1{color:#fff;margin:0 0 20px;font-size:clamp(1.6rem,5vw,2.2rem)}
+.box{max-width:900px;margin:0 auto;background:rgba(255,255,255,.82);padding:10px;border-radius:12px;box-shadow:0 8px 30px #0003;text-align:left}
+textarea{width:100%;min-height:92px;resize:vertical;border:0;background:transparent;font:inherit;padding:8px 10px;color:var(--ink)}
+textarea:focus{outline:none}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:6px}
+.paste{border:0;background:#fff;color:var(--p);border-radius:7px;padding:12px 16px;font:inherit;cursor:pointer}
+select{font:inherit;font-size:.92rem;padding:10px;border-radius:8px;border:1px solid #cfcfe2;background:#fff;color:var(--ink);max-width:100%}
+.go{margin-left:auto;border:0;background:var(--p);color:#fff;font:inherit;font-size:1.05rem;font-weight:700;padding:14px 26px;border-radius:8px;cursor:pointer;box-shadow:0 6px 16px #5b3df566}
+:focus-visible{outline:3px solid #ffd23f;outline-offset:2px}
+#msg{max-width:900px;margin:14px auto 0;color:#fff;background:#0004;border-radius:8px;padding:10px 14px;display:none;text-align:left}
+main{max-width:900px;margin:24px auto;padding:0 16px}
+.card{background:#fff;border-radius:14px;padding:18px;margin-bottom:18px;box-shadow:0 2px 14px #1c24470f}
+.card h2{margin:0 0 12px;font-size:1.1rem;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card h2 .sm{margin-left:auto}
+.empty{color:var(--mut);margin:0;padding:18px 0;text-align:center}
+.it{position:relative;display:flex;gap:14px;padding:12px;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:#fff}
+.thw{position:relative;flex:none;width:132px;height:84px;border-radius:9px;overflow:hidden;background:linear-gradient(135deg,#d9d2ff,#f3c9ff);display:grid;place-items:center;color:#fff;font-size:1.4rem}
+.thw img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.thw img.none{display:none}
+.dur{position:absolute;right:5px;bottom:5px;background:#000b;color:#fff;font-size:.72rem;padding:1px 6px;border-radius:5px}
+.dur:empty{display:none}
+.bd{flex:1;min-width:0}
+.t{font-weight:700;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;padding-right:26px}
+.meta{display:flex;gap:8px;align-items:center;margin:4px 0 8px;font-size:.82rem;color:var(--mut);flex-wrap:wrap}
+.chip{background:#5b3df51c;color:var(--p);border-radius:20px;padding:0 9px;font-weight:700}
+.ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid #cfcfe2;border-radius:8px;overflow:hidden}
+.seg button{border:0;background:#fff;color:var(--ink);padding:8px 14px;font:inherit;font-size:.9rem;font-weight:700;cursor:pointer}
+.seg button.on{background:var(--p);color:#fff}
+.s{font-size:.84rem;color:var(--mut)}
+.s.err{color:#c4352a}
+.bar{height:8px;background:#e4e4ee;border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--p),var(--m));transition:width .4s}
+.prog{display:flex;flex-direction:column;gap:5px}
+.x{position:absolute;top:8px;right:8px;border:0;background:transparent;color:var(--mut);font-size:1rem;cursor:pointer;border-radius:6px;padding:2px 7px}
+.x:hover{background:#eee}
+.x.txt{font-size:.8rem;border:1px solid #cfcfe2}
+button.sm{border:1px solid #cfcfe2;background:#fff;color:var(--ink);border-radius:7px;padding:5px 12px;font:inherit;font-size:.85rem;cursor:pointer;width:fit-content}
+button.pri{border:0;background:var(--p);color:#fff;border-radius:8px;padding:10px 18px;font:inherit;font-weight:700;cursor:pointer}
+.pri:disabled{opacity:.45;cursor:default}
+.ok{color:#1b8a4b;font-weight:700}
+.dn{display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
+.dn:first-of-type{border-top:0}
+.dn div{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.path{font-size:.85rem;color:var(--mut);word-break:break-all;margin:10px 0 0}
+.note{text-align:center;color:var(--mut);font-size:.9rem;margin:20px 0 40px}
+@media(max-width:560px){.thw{width:96px;height:64px}.go{width:100%}}
+</style>
+</head>
+<body>
+<header><i>↓</i> VidBajar</header>
+
+<section class="hero">
+  <h1>Agrega todos los enlaces que quieras</h1>
+  <div class="box">
+    <textarea id="txt" placeholder="Pega uno o varios enlaces (uno por línea) de TikTok, YouTube, Facebook, Instagram, X…" aria-label="Enlaces"></textarea>
+    <div class="row">
+      <button class="paste" id="paste" type="button">Pegar</button>
+      <select id="q" aria-label="Formato por defecto">
+        <option value="video|">MP4 · mejor calidad</option>
+        <option value="video|1080">MP4 · 1080p</option>
+        <option value="video|720">MP4 · 720p</option>
+        <option value="video|480">MP4 · 480p</option>
+        <option value="audio|">MP3 · solo audio</option>
+      </select>
+      <button class="go" id="go" type="button">Agregar a la lista</button>
+    </div>
+  </div>
+  <div id="msg" role="alert"></div>
+</section>
+
+<main>
+  <div class="card">
+    <h2>Lista de enlaces <span class="s" id="cnt"></span>
+      <button class="sm" id="vac">Vaciar pendientes</button>
+      <button class="pri" id="all" disabled>Descargar todos</button></h2>
+    <div id="list"></div>
+    <p class="empty" id="empty">La lista está vacía. Pega enlaces arriba y pulsa Agregar a la lista.</p>
+  </div>
+  <div class="card">
+    <h2>Descargados <button class="sm" id="clr">Limpiar lista</button> <button class="pri" id="open">Abrir carpeta</button></h2>
+    <div id="done"><p class="empty">Aquí aparecerán al terminar.</p></div>
+    <p class="path" id="folder"></p>
+  </div>
+  <p class="note">TikTok se descarga sin marca de agua. Usa solo contenido tuyo o con permiso y respeta los derechos de autor.</p>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const post=(u,b)=>fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(r=>r.json());
+const say=t=>{const m=$("msg");m.textContent=t||"";m.style.display=t?"block":"none"};
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
+const mb=n=>n?(n>=1e9?(n/1e9).toFixed(1)+" GB":Math.max(1,Math.round(n/1e6))+" MB"):"";
+const lab=h=>h>=2160?"4K ("+h+"p)":h+"p";
+function dur(s){if(!s)return"";s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),r=s%60;return(h?h+":"+String(m).padStart(2,"0"):m)+":"+String(r).padStart(2,"0")}
+
+$("paste").onclick=async()=>{try{const t=await navigator.clipboard.readText();$("txt").value=($("txt").value.trim()+"\n"+t).trim()}catch(e){$("txt").focus()}};
+$("txt").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey))$("go").click()});
+$("go").onclick=async()=>{
+  say();const [kind,height]=$("q").value.split("|");
+  const r=await post("/api/add",{text:$("txt").value,kind,height});
+  if(r.error){say(r.error);return}
+  $("txt").value="";if(!r.added)say("Esos enlaces ya están en la lista.");refresh();
+};
+$("all").onclick=()=>post("/api/start_all").then(refresh);
+$("vac").onclick=()=>post("/api/clear_pending").then(refresh);
+$("open").onclick=()=>post("/api/open");
+$("clr").onclick=()=>post("/api/clear_done").then(refresh);
+
+const nodes={};
+function build(i){
+  const w=el("div","it"),r={};
+  r.thw=el("div","thw","▶");r.img=el("img");r.img.alt="";r.img.onerror=()=>r.img.classList.add("none");r.dur=el("span","dur");
+  r.thw.append(r.img,r.dur);
+  const bd=el("div","bd");r.t=el("div","t");r.meta=el("div","meta");
+  const ctl=el("div","ctl");r.ctl=ctl;
+  const seg=el("div","seg");r.bv=el("button",null,"MP4");r.ba=el("button",null,"MP3");seg.append(r.bv,r.ba);
+  r.bv.onclick=()=>post("/api/set",{id:i.id,kind:"video"}).then(refresh);
+  r.ba.onclick=()=>post("/api/set",{id:i.id,kind:"audio"}).then(refresh);
+  r.sel=el("select");r.sel.setAttribute("aria-label","Calidad");r.sel.onchange=()=>post("/api/set",{id:i.id,height:r.sel.value}).then(refresh);
+  r.size=el("span","s");ctl.append(seg,r.sel,r.size);
+  r.prog=el("div","prog");const bar=el("div","bar");r.fill=el("i");bar.append(r.fill);r.bar=bar;r.st=el("div","s");
+  r.rt=el("button","sm","Reintentar");r.rt.onclick=()=>post("/api/retry",{id:i.id}).then(refresh);
+  r.prog.append(bar,r.st,r.rt);
+  r.x=el("button","x","✕");r.x.onclick=()=>post("/api/remove",{id:i.id}).then(refresh);
+  bd.append(r.t,r.meta,ctl,r.prog);w.append(r.thw,bd,r.x);w._r=r;return w;
+}
+function upd(w,i){
+  const r=w._r,pend=i.state==="pending";
+  r.t.textContent=i.title;
+  if(i.thumb&&!r.img.dataset.s){r.img.src="/api/thumb?id="+i.id;r.img.dataset.s="1"}
+  r.dur.textContent=dur(i.duration);
+  r.meta.replaceChildren();
+  if(i.site)r.meta.append(el("span","chip",i.site));
+  if(i.uploader)r.meta.append(el("span",null,i.uploader));
+  r.ctl.style.display=pend?"flex":"none";
+  r.prog.style.display=pend?"none":"flex";
+  r.bv.className=i.kind!=="audio"?"on":"";r.ba.className=i.kind==="audio"?"on":"";
+  const sig=JSON.stringify(i.qualities)+i.info+i.height;
+  if(r.sig!==sig){
+    r.sig=sig;r.sel.replaceChildren();
+    const opts=[["","Mejor calidad"]];
+    (i.qualities.length?i.qualities.map(q=>[String(q.h),lab(q.h)+(q.size?" · "+mb(q.size):"")]):(i.info==="loading"?[]:[1080,720,480,360].map(h=>[String(h),lab(h)]))).forEach(o=>opts.push(o));
+    if(i.height&&!opts.some(o=>o[0]===String(i.height)))opts.push([String(i.height),i.height+"p"]);
+    opts.forEach(o=>{const op=el("option",null,o[1]);op.value=o[0];r.sel.append(op)});
+  }
+  if(document.activeElement!==r.sel)r.sel.value=i.height||"";
+  r.sel.style.display=i.kind==="audio"?"none":"";
+  r.sel.disabled=i.info==="loading";
+  const q=i.qualities.find(q=>String(q.h)===String(i.height))||(!i.height?i.qualities[0]:null);
+  r.size.textContent=i.info==="loading"?"Leyendo video…":i.kind==="audio"?"MP3 · 192 kbps":(q&&q.size?"≈ "+mb(q.size):(i.info==="fail"?"Sin vista previa":""));
+  r.x.textContent=i.state==="downloading"?"Cancelar":"✕";r.x.className=i.state==="downloading"?"x txt":"x";
+  r.x.title=i.state==="downloading"?"Cancelar descarga":"Quitar de la lista";
+  const err=i.state==="error";
+  r.bar.style.display=(i.state==="downloading"||i.state==="processing")?"block":"none";
+  r.fill.style.width=(i.state==="processing"?100:(i.pct||0))+"%";
+  r.rt.style.display=err?"block":"none";
+  r.st.className=err?"s err":"s";
+  r.st.textContent=err?i.error:i.state==="waiting"?"En espera…":i.state==="processing"?"Procesando y uniendo audio y video…":i.state==="downloading"?"Descargando "+Math.round(i.pct||0)+"%"+(i.speed?" · "+(i.speed/1e6).toFixed(1)+" MB/s":"")+(i.eta?" · faltan "+i.eta+" s":""):"";
+}
+function render(d){
+  const L=$("list"),ids=new Set(d.items.map(i=>i.id));
+  Object.keys(nodes).forEach(k=>{if(!ids.has(k)){nodes[k].remove();delete nodes[k]}});
+  d.items.forEach(i=>{if(!nodes[i.id])nodes[i.id]=build(i);upd(nodes[i.id],i);if(nodes[i.id].parentNode!==L)L.append(nodes[i.id])});
+  const pend=d.items.filter(i=>i.state==="pending").length;
+  $("cnt").textContent=d.items.length?"("+d.items.length+")":"";
+  $("all").textContent="Descargar todos"+(pend?" ("+pend+")":"");$("all").disabled=!pend;
+  $("empty").style.display=d.items.length?"none":"block";
+  const D=$("done");D.replaceChildren();
+  if(!d.done.length)D.append(el("p","empty","Aquí aparecerán al terminar."));
+  d.done.forEach(i=>{const w=el("div","dn");w.append(el("span","ok","✓"),el("div",null,i.name||i.title));D.append(w)});
+  $("folder").textContent="Se guardan en: "+d.folder;
+}
+async function refresh(){try{render(await (await fetch("/api/queue")).json())}catch(e){say("Se perdió la conexión con el programa. ¿Sigue abierta la ventana negra?")}}
+refresh();setInterval(refresh,800);
+</script>
+</body>
+</html>
