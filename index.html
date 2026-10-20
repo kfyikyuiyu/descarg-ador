@@ -100,7 +100,10 @@ button.pri{border:0;background:var(--p);color:#fff;border-radius:8px;padding:10p
 
 <script>
 const $=id=>document.getElementById(id);
-const post=(u,b)=>fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(r=>r.json());
+let CID="local";try{CID=localStorage.cid||(localStorage.cid=Math.random().toString(36).slice(2)+Date.now().toString(36))}catch(e){}
+const post=(u,b)=>fetch(u,{method:"POST",headers:{"Content-Type":"application/json","X-Client":CID},body:JSON.stringify(b||{})}).then(r=>r.json());
+const seen=new Set();let first=true;
+function autoSave(id){const a=document.createElement("a");a.href="/api/file?id="+id;a.download="";document.body.append(a);a.click();a.remove()}
 const say=t=>{const m=$("msg");m.textContent=t||"";m.style.display=t?"block":"none"};
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
 const mb=n=>n?(n>=1e9?(n/1e9).toFixed(1)+" GB":Math.max(1,Math.round(n/1e6))+" MB"):"";
@@ -181,10 +184,17 @@ function render(d){
   $("empty").style.display=d.items.length?"none":"block";
   const D=$("done");D.replaceChildren();
   if(!d.done.length)D.append(el("p","empty","Aquí aparecerán al terminar."));
-  d.done.forEach(i=>{const w=el("div","dn");w.append(el("span","ok","✓"),el("div",null,i.name||i.title));D.append(w)});
-  $("folder").textContent="Se guardan en: "+d.folder;
+  d.done.forEach(i=>{
+    const w=el("div","dn");w.append(el("span","ok","✓"),el("div",null,i.name||i.title));
+    if(d.server){const a=el("a",null,"Guardar");a.href="/api/file?id="+i.id;a.style.cssText="margin-left:auto;color:var(--p);font-weight:700";w.append(a)}
+    D.append(w);
+    if(!seen.has(i.id)){seen.add(i.id);if(!first&&d.server)autoSave(i.id)}
+  });
+  first=false;
+  $("open").style.display=d.server?"none":"";
+  $("folder").textContent=d.server?"Cada video se guarda en tu dispositivo al terminar (carpeta de descargas del navegador). Si no se guardó solo, pulsa Guardar. En el servidor se borran en 1 hora.":"Se guardan en: "+d.folder;
 }
-async function refresh(){try{render(await (await fetch("/api/queue")).json())}catch(e){say("Se perdió la conexión con el programa. ¿Sigue abierta la ventana negra?")}}
+async function refresh(){try{render(await (await fetch("/api/queue",{headers:{"X-Client":CID}})).json())}catch(e){say("Se perdió la conexión con el programa. ¿Sigue abierta la ventana negra?")}}
 refresh();setInterval(refresh,800);
 </script>
 </body>
