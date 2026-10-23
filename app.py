@@ -1,4 +1,4 @@
-import json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request, uuid, webbrowser
+import importlib.metadata as imd, json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request, uuid, webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -28,7 +28,29 @@ YT_FALLBACK = {"extractor_args": {"youtube": {"player_client": ["tv", "mweb", "w
 EMBED_OK = ("mp3", "m4a", "opus", "flac")      # formatos donde se puede incrustar la carátula
 MAX_WORKERS = 8
 
+# Errores típicos de TikTok cuando pide verificación / bloquea la solicitud
+TT_ERR = ("unexpected response from webpage", "unable to extract webpage", "universal data",
+          "unable to extract challenge", "status code", "unable to extract aweme", "failed to parse json")
+
 good = {"browser": None}
+UPDATE = {"state": "idle", "msg": ""}
+
+def impersonation_ok():
+    """TikTok necesita 'curl_cffi' compatible para imitar un navegador real."""
+    try:
+        with YoutubeDL({"quiet": True}) as y:
+            return bool(y._get_available_impersonate_targets())
+    except Exception:
+        return False
+
+def ytdlp_version():
+    try:
+        return imd.version("yt-dlp")
+    except Exception:
+        return "?"
+
+LOADED_VERSION = ytdlp_version()
+IMPERSONATION = impersonation_ok()
 DEFAULT_DEST = os.path.join(os.path.expanduser("~"), "Downloads", "VidBajar")
 ITEMS, ORDER, DONE = {}, [], []
 LOCK = threading.RLock()
@@ -123,6 +145,7 @@ def base_opts():
 def extract(url, extra=None, download=False):
     extra = extra or {}
     base = base_opts()
+    tiktok = "tiktok.com" in url
     try:
         return _try(url, {**base, **extra}, download)
     except Exception as first:
@@ -135,7 +158,15 @@ def extract(url, extra=None, download=False):
             except Exception as e2:
                 if "cancelado" in str(e2).lower():
                     raise
-        if "cookiefile" in base or "cookiesfrombrowser" in base or not any(k in low for k in NEEDS_LOGIN):
+        if tiktok and any(k in low for k in TT_ERR):
+            time.sleep(1.5)                      # TikTok a veces responde bien al segundo intento
+            try:
+                return _try(url, {**base, **extra}, download)
+            except Exception as e2:
+                if "cancelado" in str(e2).lower():
+                    raise
+        needs = any(k in low for k in NEEDS_LOGIN) or (tiktok and any(k in low for k in TT_ERR))
+        if "cookiefile" in base or "cookiesfrombrowser" in base or not needs:
             raise first
         for b in BROWSERS:
             try:
@@ -152,7 +183,16 @@ def extract(url, extra=None, download=False):
 def friendly(e):
     m = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).strip()
     print("ERROR:", m)
+    m = re.split(r";? ?please report this issue", m)[0].strip()
     low = m.lower()
+    if "tiktok" in low and any(k in low for k in TT_ERR) or "unexpected response from webpage" in low:
+        if not IMPERSONATION:
+            return ("TikTok necesita el componente «curl_cffi», que no está instalado o no es compatible. "
+                    "Pulsa ⬆ Actualizar (arriba a la derecha), espera a que termine y reinicia el programa.")
+        return ("TikTok bloqueó la solicitud (pide verificación). Prueba, en este orden: "
+                "1) pulsa ⬆ Actualizar y reinicia el programa; "
+                "2) abre tiktok.com en Firefox, inicia sesión, cierra Firefox y pulsa Reintentar; "
+                "3) si usas VPN, apágala o cámbiala de país.")
     if any(k in low for k in NEEDS_LOGIN):
         return ("Este video exige iniciar sesión. Abre la plataforma en Firefox o Chrome, "
                 "inicia sesión, cierra ese navegador y vuelve a intentar.")
@@ -360,6 +400,30 @@ def worker():
         finally:
             Q.task_done()
 
+# ---------- actualizar yt-dlp ----------
+def do_update():
+    UPDATE.update(state="running", msg="Descargando la última versión de yt-dlp…")
+    py = sys.executable
+    steps = [
+        [py, "-m", "pip", "install", "-U", "--pre", "--no-deps", "--disable-pip-version-check", "yt-dlp"],
+        [py, "-m", "pip", "install", "-U", "--prefer-binary", "--disable-pip-version-check",
+         "yt-dlp[default]", "imageio-ffmpeg"],
+    ]
+    try:
+        for cmd in steps:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+            if r.returncode != 0 and "externally-managed" in (r.stderr or "").lower():
+                # Python del sistema (Linux/Mac): pip exige esta opción
+                r = subprocess.run(cmd + ["--break-system-packages"], capture_output=True, text=True, timeout=900)
+            if r.returncode != 0:
+                tail = (r.stderr or r.stdout or "").strip().splitlines()[-1:] or ["error desconocido"]
+                UPDATE.update(state="error", msg="No se pudo actualizar: " + tail[0][:200])
+                return
+        new = ytdlp_version()
+        UPDATE.update(state="done", msg=f"Actualizado a yt-dlp {new}. Cierra la ventana negra y vuelve a abrir el programa.")
+    except Exception as e:
+        UPDATE.update(state="error", msg="No se pudo actualizar: " + str(e)[:200])
+
 # ---------- open folder ----------
 def open_folder(path=None):
     p = path or DEST
@@ -491,6 +555,10 @@ class H(BaseHTTPRequestHandler):
             return self.send_error(404)
         if p == "/api/config":
             return self.send_json(CFG)
+        if p == "/api/status":
+            cur = ytdlp_version()
+            return self.send_json({"version": cur, "loaded": LOADED_VERSION, "restart": cur != LOADED_VERSION,
+                                   "impersonation": IMPERSONATION, "update": UPDATE})
         if p == "/api/history":
             return self.send_json({"items": DONE[:200]})
         if p == "/api/file":
@@ -599,6 +667,12 @@ class H(BaseHTTPRequestHandler):
             save_history()
             return self.send_json({"ok": True})
 
+        if p == "/api/update":
+            if UPDATE["state"] != "running":
+                threading.Thread(target=do_update, daemon=True).start()
+                UPDATE.update(state="running", msg="Actualizando…")
+            return self.send_json({"ok": True})
+
         if p == "/api/open":
             open_folder(data.get("path"))
             return self.send_json({"ok": True})
@@ -685,6 +759,7 @@ if __name__ == "__main__":
     print("  No cierres esta ventana.")
     print("  Guardando en:", DEST)
     print("  Descargas simultáneas:", CFG.get("workers", 3), "| Historial:", CFG.get("history", True))
+    print("  yt-dlp:", LOADED_VERSION, "| TikTok (curl_cffi):", "OK" if IMPERSONATION else "NO DISPONIBLE -> pulsa Actualizar")
     print(f"  Abre: http://localhost:{port}")
     print("=" * 60)
     try:

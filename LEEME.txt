@@ -35,6 +35,16 @@ NOVEDADES
 • Eliminar archivos del disco desde el historial.
 • Estadísticas: pendientes, activas, completados, tamaño total.
 
+TIKTOK / SI UN SITIO FALLA
+--------------------------
+TikTok y YouTube cambian seguido y bloquean programas. Si ves un error:
+  1) Pulsa «⬆ Actualizar» (arriba a la derecha). Instala la última versión de yt-dlp.
+     Cuando termine, cierra la ventana negra y vuelve a abrir el programa.
+  2) Abre tiktok.com en Firefox, inicia sesión, CIERRA Firefox y pulsa Reintentar.
+     El programa usa tu sesión solo (Firefox funciona mejor que Chrome/Edge).
+  3) Si usas VPN, apágala o cámbiala de país. Prueba también otro enlace del mismo sitio.
+Si arriba sale un aviso naranja pidiendo curl_cffi, pulsa «⬆ Actualizar» y reinicia.
+
 YOUTUBE
 -------
 YouTube cambia seguido. Si falla, actualiza (los .bat/.sh ya lo hacen solos al iniciar).

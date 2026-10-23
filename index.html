@@ -53,6 +53,7 @@ input[type=number]{width:80px}
 .go:hover{transform:translateY(-1px);box-shadow:0 10px 26px #5b3df57a}
 .go:active{transform:translateY(0)}
 #msg{max-width:960px;margin:12px auto 0;color:#fff;background:#0005;border-radius:9px;padding:10px 14px;display:none;text-align:left;position:relative}
+#warn{max-width:960px;margin:12px auto 0;background:#f59e0b;color:#1f1300;border-radius:9px;padding:10px 14px;display:none;text-align:left;font-weight:600}
 #msg.err{background:#dc2626}
 #msg.ok{background:#16a34a}
 
@@ -145,6 +146,7 @@ main{max-width:960px;margin:22px auto;padding:0 16px}
   <div class="logo">↓</div>
   <h1>VidBajar <span class="tag">PRO</span></h1>
   <div class="sp"></div>
+  <button class="hbtn" id="updBtn" title="Instalar la última versión de yt-dlp (arregla TikTok, YouTube, etc.)">⬆ Actualizar</button>
   <button class="hbtn ico" id="themeBtn" title="Tema (Alt+T)">🌓</button>
   <button class="hbtn ico" id="cfgBtn" title="Ajustes (Alt+,)">⚙️</button>
 </header>
@@ -180,6 +182,7 @@ main{max-width:960px;margin:22px auto;padding:0 16px}
     </div>
   </div>
   <div id="msg" role="alert"></div>
+  <div id="warn" role="status"></div>
 </section>
 
 <main>
@@ -263,6 +266,32 @@ $("themeBtn").onclick = () => {
   applyTheme(cur); post("/api/config",{theme:cur});
   toast("Tema: "+ (cur==="auto"?"automático":cur==="light"?"claro":"oscuro"));
 };
+
+// ---------- actualizar yt-dlp ----------
+const warn = t => { const w=$("warn"); w.textContent=t||""; w.style.display=t?"block":"none"; };
+async function checkStatus(){
+  try{
+    const s = await fetch("/api/status").then(r=>r.json());
+    if(s.update && s.update.state==="running"){ warn("⏳ "+s.update.msg); return s; }
+    if(s.update && s.update.state==="done"){ warn("✅ "+s.update.msg); return s; }
+    if(s.update && s.update.state==="error"){ warn("⚠ "+s.update.msg); return s; }
+    if(s.restart) warn("🔄 yt-dlp ya se actualizó a "+s.version+". Cierra la ventana negra y vuelve a abrir el programa para usarlo.");
+    else if(!s.impersonation) warn("⚠ Falta el componente que necesita TikTok (curl_cffi). Pulsa «⬆ Actualizar» y reinicia el programa.");
+    else warn("");
+    return s;
+  }catch(e){}
+}
+$("updBtn").onclick = async () => {
+  if(!confirm("Se instalará la última versión de yt-dlp (necesita internet y tarda 1-2 minutos). ¿Continuar?")) return;
+  $("updBtn").disabled = true; warn("⏳ Actualizando… no cierres la ventana negra.");
+  await post("/api/update");
+  const iv = setInterval(async () => {
+    const s = await checkStatus();
+    if(s && s.update && s.update.state!=="running"){ clearInterval(iv); $("updBtn").disabled=false;
+      toast(s.update.state==="done" ? "Actualizado ✓ — reinicia el programa" : "No se pudo actualizar", s.update.state==="done"?"ok":"err"); }
+  }, 2000);
+};
+checkStatus();
 
 // ---------- settings ----------
 $("cfgBtn").onclick = () => {
