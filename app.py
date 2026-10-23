@@ -583,3 +583,19 @@ if __name__ == "__main__":
     print("  Workers:", workers, "| Historial:", CFG.get("history", True))
     print("=" * 60)
     ThreadingHTTPServer(("127.0.0.1", 5000), H).serve_forever()
+
+    if __name__ == "__main__":
+    # ... (tus hilos worker)
+    
+    # --- CORRECCIÓN PARA RENDER ---
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    
+    print("=" * 60)
+    print(f"  VidBajar Pro — listo en http://0.0.0.0:{port}")
+    print("  No cierres esta ventana.")
+    print("  Guardando en:", DEST)
+    print("=" * 60)
+    
+    # Escucha en 0.0.0.0 en lugar de 127.0.0.1
+    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
