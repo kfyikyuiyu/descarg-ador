@@ -11,8 +11,9 @@ if not defined PY (
   pause
   exit /b
 )
-echo Actualizando componentes (necesario para que TikTok y YouTube funcionen)...
+echo Instalando y actualizando dependencias...
 %PY% -m pip install -U --disable-pip-version-check --prefer-binary -r requirements.txt
 echo.
+echo Iniciando VidBajar Pro...
 %PY% app.py
 pause

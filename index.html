@@ -546,7 +546,9 @@ document.addEventListener("keydown", e => {
 let lastDone = 0, notifAsked = false;
 async function refresh(){
   try{
-    const d = await (await fetch("/api/queue")).json();
+    const res = await fetch("/api/queue");
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
     render(d);
     if(cfg.notify && d.stats && d.stats.done !== lastDone && lastDone!==0 && d.stats.done > lastDone){
       if(!notifAsked && Notification.permission === "default"){
@@ -559,9 +561,14 @@ async function refresh(){
     }
     if(d.stats) lastDone = d.stats.done;
   }catch(e){
+    // Silenciar el error de conexión temporal al inicio
+    if(!window.firstLoadDone) return;
     say("Se perdió la conexión con el programa. ¿Sigue abierta la ventana negra?", "err");
   }
 }
+window.firstLoadDone = false;
+setTimeout(() => { window.firstLoadDone = true; }, 2000); // Dar 2 segundos de gracia al inicio
+
 refresh();
 setInterval(refresh, 800);
 </script>

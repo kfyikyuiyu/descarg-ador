@@ -567,11 +567,9 @@ if __name__ == "__main__":
         threading.Thread(target=worker, daemon=True).start()
         WORKER_COUNT += 1
         
-    # Si NO estamos en Render, abrimos el navegador local
     if not os.environ.get("RENDER"):
         threading.Timer(1.0, lambda: webbrowser.open("http://localhost:5000")).start()
         
-    # Render asigna el puerto en la variable de entorno PORT. Si no existe, usa 5000.
     port = int(os.environ.get("PORT", 5000))
     
     print("=" * 60)
@@ -582,5 +580,4 @@ if __name__ == "__main__":
     print(f"  Escuchando en 0.0.0.0:{port}")
     print("=" * 60)
     
-    # EL CAMBIO CRÍTICO: 0.0.0.0 en lugar de 127.0.0.1
     ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
