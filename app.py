@@ -1,40 +1,52 @@
 import json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request, uuid, webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import download_range_func
 import imageio_ffmpeg
 
-FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+# Si hay un ffmpeg instalado en el sistema se usa ese (trae ffprobe y suele ser más estable);
+# si no, el que incluye imageio-ffmpeg.
+FFMPEG = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 HERE = os.path.dirname(os.path.abspath(__file__))
 COOKIE_FILE = os.path.join(HERE, "cookies.txt")
 HISTORY_FILE = os.path.join(HERE, "history.json")
 CONFIG_FILE = os.path.join(HERE, "config.json")
+
+# Runtimes JS que yt-dlp puede usar para resolver YouTube (si no están instalados, se ignoran).
 FAST = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20,
         "concurrent_fragment_downloads": 8, "retries": 5, "fragment_retries": 5,
-        "skip_unavailable_fragments": True, "ignoreerrors": False}
+        "skip_unavailable_fragments": True, "ignoreerrors": False,
+        "js_runtimes": {"deno": {}, "node": {}, "bun": {}, "quickjs": {}},
+        "remote_components": ["ejs:github"]}
 BROWSERS = ["firefox", "chrome", "edge", "brave"]
 NEEDS_LOGIN = ("log in", "login", "cookies", "authentication", "comfortable", "sign in",
                "age-restricted", "confirm your age", "private video", "members-only",
                "this video is private")
 YT_FALLBACK = {"extractor_args": {"youtube": {"player_client": ["tv", "mweb", "web_safari", "ios"]}}}
+EMBED_OK = ("mp3", "m4a", "opus", "flac")      # formatos donde se puede incrustar la carátula
+MAX_WORKERS = 8
 
 good = {"browser": None}
-DEST = os.path.join(os.path.expanduser("~"), "Downloads", "VidBajar")
-os.makedirs(DEST, exist_ok=True)
+DEFAULT_DEST = os.path.join(os.path.expanduser("~"), "Downloads", "VidBajar")
 ITEMS, ORDER, DONE = {}, [], []
+LOCK = threading.RLock()
 Q = queue.Queue()
 INFO_SEM = threading.Semaphore(6)
-DL_SEM = threading.Semaphore(3)
 CANCEL = threading.Event()
+SLOT = threading.Condition()
+ACTIVE = [0]
 
 # ---------- config ----------
 def load_cfg():
+    c = {"dest": DEFAULT_DEST, "workers": 3, "theme": "auto", "notify": True, "history": True}
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            c.update(json.load(f))
     except Exception:
-        return {"dest": DEST, "workers": 3, "theme": "auto", "notify": True, "history": True}
+        pass
+    return c
 
 def save_cfg(c):
     try:
@@ -44,14 +56,20 @@ def save_cfg(c):
         pass
 
 CFG = load_cfg()
-DEST = CFG.get("dest") or DEST
-os.makedirs(DEST, exist_ok=True)
+DEST = CFG.get("dest") or DEFAULT_DEST
+try:
+    os.makedirs(DEST, exist_ok=True)
+except Exception:
+    DEST = DEFAULT_DEST
+    CFG["dest"] = DEST
+    os.makedirs(DEST, exist_ok=True)
 
 # ---------- history ----------
 def load_history():
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            d = json.load(f)
+            return d if isinstance(d, list) else []
     except Exception:
         return []
 
@@ -64,10 +82,7 @@ def save_history():
     except Exception:
         pass
 
-try:
-    DONE = load_history()
-except Exception:
-    DONE = []
+DONE = load_history()
 
 # ---------- helpers ----------
 def clean_url(u):
@@ -79,17 +94,19 @@ def clean_url(u):
         return f"https://www.youtube.com/watch?v={vid}"
     return u
 
-def human(n):
-    if not n: return ""
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024: return f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} TB"
+def drop(iid):
+    with LOCK:
+        ITEMS.pop(iid, None)
+        if iid in ORDER:
+            ORDER.remove(iid)
 
-def safe_name(s, maxlen=80):
-    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", s or "video")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s[:maxlen] or "video"
+def to_float(v):
+    try:
+        if v in (None, ""):
+            return None
+        return float(v)
+    except Exception:
+        return None
 
 def _try(url, opts, download):
     with YoutubeDL(opts) as y:
@@ -110,13 +127,14 @@ def extract(url, extra=None, download=False):
         return _try(url, {**base, **extra}, download)
     except Exception as first:
         low = str(first).lower()
-        if "cancelado" in low or "cancel" in low:
+        if "cancelado" in low:
             raise
         if "youtu" in url and not any(k in low for k in NEEDS_LOGIN):
             try:
                 return _try(url, {**base, **extra, **YT_FALLBACK}, download)
-            except Exception:
-                pass
+            except Exception as e2:
+                if "cancelado" in str(e2).lower():
+                    raise
         if "cookiefile" in base or "cookiesfrombrowser" in base or not any(k in low for k in NEEDS_LOGIN):
             raise first
         for b in BROWSERS:
@@ -125,7 +143,9 @@ def extract(url, extra=None, download=False):
                 good["browser"] = b
                 print("Usando la sesión de", b)
                 return d
-            except Exception:
+            except Exception as e3:
+                if "cancelado" in str(e3).lower():
+                    raise
                 continue
         raise first
 
@@ -146,7 +166,9 @@ def friendly(e):
         return "Se agotó el tiempo de espera. Revisa tu conexión a internet."
     if "http error 429" in low or "too many requests" in low:
         return "Demasiadas solicitudes. Espera unos minutos y vuelve a intentar."
-    if "ffmpeg" in low:
+    if "unable to download" in low and ("getaddrinfo" in low or "name or service" in low or "connection" in low):
+        return "Sin conexión a internet o el sitio no responde."
+    if "ffmpeg" in low or "ffprobe" in low:
         return "Error con FFmpeg. Reinstala imageio-ffmpeg (pip install --upgrade imageio-ffmpeg)."
     return "No se pudo procesar el enlace. " + m[-220:]
 
@@ -154,7 +176,7 @@ def sizes(d):
     out, seen = [], set()
     for f in (d.get("formats") or []):
         h = f.get("height")
-        if not h or f.get("vcodec") in ("none", None):
+        if not h or f.get("vcodec") == "none":      # "none" = solo audio; None = códec desconocido (HLS), es válido
             continue
         if f.get("format_note") and "watermarked" in str(f["format_note"]).lower():
             continue
@@ -162,7 +184,8 @@ def sizes(d):
             continue
         seen.add(h)
         size = f.get("filesize") or f.get("filesize_approx")
-        out.append({"h": h, "size": size, "ext": f.get("ext") or "mp4",
+        w = f.get("width") or 0
+        out.append({"h": h, "s": min(h, w) if w else h, "size": size, "ext": f.get("ext") or "mp4",
                     "fps": f.get("fps"), "vcodec": f.get("vcodec")})
     out.sort(key=lambda x: x["h"], reverse=True)
     return out
@@ -188,11 +211,10 @@ def fetch_info(it):
                 is_playlist=bool(d.get("_type") == "playlist"),
                 playlist_count=len(d.get("entries") or []) if d.get("_type") == "playlist" else 0,
             )
-            subs = list((d.get("subtitles") or {}).keys())
-            it["subtitles"] = subs[:10]
+            it["subtitles"] = list((d.get("subtitles") or {}).keys())[:10]
             h = str(it.get("height") or "")
             if it["kind"] == "video" and h.isdigit() and qs:
-                c = [q["h"] for q in qs if q["h"] <= int(h)]
+                c = [q["h"] for q in qs if q["s"] <= int(h)]
                 it["height"] = str(max(c) if c else min(q["h"] for q in qs))
             elif qs and not it.get("height"):
                 it["height"] = str(qs[0]["h"])
@@ -202,7 +224,34 @@ def fetch_info(it):
                 it.update(info="fail", info_error=friendly(e))
 
 # ---------- download ----------
+def acquire_slot(it):
+    """Espera un hueco según el nº de descargas simultáneas de los Ajustes."""
+    with SLOT:
+        while ACTIVE[0] >= max(1, min(MAX_WORKERS, int(CFG.get("workers", 3) or 3))):
+            if it.get("cancel") or CANCEL.is_set():
+                return False
+            SLOT.wait(0.5)
+        ACTIVE[0] += 1
+    return True
+
+def release_slot():
+    with SLOT:
+        ACTIVE[0] -= 1
+        SLOT.notify_all()
+
 def process(it):
+    if not acquire_slot(it):
+        drop(it["id"])
+        return
+    try:
+        if it.get("cancel") or ITEMS.get(it["id"]) is not it:
+            drop(it["id"])
+            return
+        run_download(it)
+    finally:
+        release_slot()
+
+def run_download(it):
     it.update(state="downloading", pct=0, error=None)
     last_update = [0.0]
     start = time.time()
@@ -220,13 +269,9 @@ def process(it):
             if now - last_update[0] < 0.25:
                 return
             last_update[0] = now
-            pct = round(d.get("downloaded_bytes", 0) * 100 / tot, 1) if tot else 0
-            it.update(state="downloading",
-                      speed=d.get("speed") or 0,
-                      eta=d.get("eta"),
-                      downloaded=d.get("downloaded_bytes"),
-                      total=tot,
-                      pct=pct)
+            pct = min(100, round(d.get("downloaded_bytes", 0) * 100 / tot, 1)) if tot else 0
+            it.update(state="downloading", speed=d.get("speed") or 0, eta=d.get("eta"),
+                      downloaded=d.get("downloaded_bytes"), total=tot, pct=pct)
         elif d["status"] == "finished":
             it.update(state="processing", pct=100)
 
@@ -243,45 +288,48 @@ def process(it):
         "writethumbnail": False,
         "writeinfojson": False,
     }
-    h = it["height"]
+    h = it.get("height", "")
     if it["kind"] == "audio":
-        opts.update(
-            format="bestaudio/best",
-            postprocessors=[
-                {"key": "FFmpegExtractAudio", "preferredcodec": it.get("audio_fmt", "mp3"),
-                 "preferredquality": str(it.get("audio_q", 192))},
-            ],
-        )
-        if it.get("embed_thumb", True):
+        fmt = it.get("audio_fmt", "mp3")
+        pp = [{"key": "FFmpegExtractAudio", "preferredcodec": fmt,
+               "preferredquality": str(it.get("audio_q", 192))}]
+        if it.get("embed_thumb", True) and fmt in EMBED_OK:
             opts["writethumbnail"] = True
-            opts["postprocessors"].append({"key": "EmbedThumbnail"})
+            pp.append({"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"})
+            pp.append({"key": "EmbedThumbnail"})
+        opts.update(format="bestaudio/best", postprocessors=pp)
     else:
         cap = f"[height<={int(h)}]" if str(h).isdigit() else ""
         opts.update(
             format=f"bv*{cap}[format_note!*=watermarked]+ba/b{cap}[format_note!*=watermarked]/b{cap}/bv*+ba/b",
             merge_output_format="mp4",
+            format_sort=["res", "vcodec:h264", "acodec:aac"],
         )
         if it.get("subs"):
             opts.update(writesubtitles=True, writeautomaticsub=True,
                         subtitleslangs=["es", "en"] if not it.get("sub_lang") else [it["sub_lang"]],
                         subtitlesformat="srt")
 
+    # Recorte (segundo inicio / fin)
+    ts, te = to_float(it.get("trim_start")) or 0.0, to_float(it.get("trim_end"))
+    if ts > 0 or (te and te > 0):
+        if te and te <= ts:
+            te = None
+        opts["download_ranges"] = download_range_func(None, [(ts, te if te else float("inf"))])
+        opts["force_keyframes_at_cuts"] = True
+
     try:
-        with DL_SEM:
-            d = extract(clean_url(it["url"]), opts, download=True)
+        d = extract(clean_url(it["url"]), opts, download=True)
+        if it.get("cancel"):
+            raise Exception("Cancelado por el usuario")
         path = ""
-        req = (d.get("requested_downloads") or [{}])[0]
-        path = req.get("filepath") or ""
-        if not path:
-            for f in (d.get("requested_downloads") or []):
-                if f.get("filepath"):
-                    path = f["filepath"]
-                    break
-        fname = os.path.basename(path) if path else ""
-        duration = round(time.time() - start, 1)
+        for f in (d.get("requested_downloads") or []):
+            if f.get("filepath"):
+                path = f["filepath"]
+                break
         entry = {
             "title": d.get("title") or it["url"],
-            "name": fname,
+            "name": os.path.basename(path) if path else "",
             "url": it["url"],
             "site": it.get("site") or "",
             "size": os.path.getsize(path) if path and os.path.exists(path) else 0,
@@ -289,39 +337,69 @@ def process(it):
             "duration": d.get("duration"),
             "uploader": d.get("uploader"),
             "kind": it["kind"],
-            "elapsed": duration,
+            "elapsed": round(time.time() - start, 1),
         }
         DONE.insert(0, entry)
         save_history()
-        ITEMS.pop(it["id"], None)
-        if it["id"] in ORDER:
-            ORDER.remove(it["id"])
+        drop(it["id"])
     except Exception as e:
-        if it.get("cancel"):
-            ITEMS.pop(it["id"], None)
-            if it["id"] in ORDER:
-                ORDER.remove(it["id"])
+        if it.get("cancel") or CANCEL.is_set():
+            drop(it["id"])
         else:
             it.update(state="error", error=friendly(e))
 
 def worker():
     while True:
         iid = Q.get()
-        it = ITEMS.get(iid)
-        if it and it["state"] in ("waiting",):
-            process(it)
-        Q.task_done()
+        try:
+            it = ITEMS.get(iid)
+            if it and it["state"] == "waiting":
+                process(it)
+        except Exception as e:
+            print("Error en worker:", e)
+        finally:
+            Q.task_done()
 
 # ---------- open folder ----------
 def open_folder(path=None):
     p = path or DEST
-    if sys.platform.startswith("win"):
-        try: os.startfile(p)
-        except: pass
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", p])
-    else:
-        subprocess.Popen(["xdg-open", p])
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(p)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", p])
+        else:
+            subprocess.Popen(["xdg-open", p])
+    except Exception:
+        pass
+
+QUEUE_KEYS = ("id", "url", "title", "state", "pct", "speed", "eta", "error", "kind", "height",
+              "info", "info_error", "site", "uploader", "duration", "qualities",
+              "subtitles", "webpage", "is_playlist", "playlist_count",
+              "downloaded", "total", "audio_fmt", "audio_q", "embed_thumb", "subs", "sub_lang",
+              "trim_start", "trim_end")
+
+def queue_snapshot():
+    items = []
+    for i in list(ORDER):
+        it = ITEMS.get(i)
+        if not it:
+            continue
+        row = {k: it.get(k) for k in QUEUE_KEYS}
+        row["thumb"] = bool(it.get("thumb_url"))
+        items.append(row)
+    return {
+        "items": items,
+        "done": DONE[:50],
+        "folder": DEST,
+        "stats": {
+            "pending": sum(1 for x in items if x["state"] == "pending"),
+            "downloading": sum(1 for x in items if x["state"] in ("downloading", "processing", "waiting")),
+            "done": len(DONE),
+            "total_size": sum(x.get("size") or 0 for x in DONE),
+        },
+        "config": CFG,
+    }
 
 # ---------- HTTP ----------
 class H(BaseHTTPRequestHandler):
@@ -346,10 +424,31 @@ class H(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(b)
 
     def do_GET(self):
+        try:
+            self._get()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            print("ERROR GET", self.path, repr(e))
+            try: self.send_json({"error": str(e)}, 500)
+            except Exception: pass
+
+    def do_POST(self):
+        try:
+            self._post()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            print("ERROR POST", self.path, repr(e))
+            try: self.send_json({"error": str(e)}, 500)
+            except Exception: pass
+
+    def _get(self):
         parsed = urlparse(self.path)
         p = parsed.path
         q = {k: v[0] for k, v in parse_qs(parsed.query).items()}
@@ -369,24 +468,7 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(svg))); self.end_headers()
             return self.wfile.write(svg)
         if p == "/api/queue":
-            keys = ("id", "url", "title", "state", "pct", "speed", "eta", "error", "kind", "height",
-                    "info", "info_error", "site", "uploader", "duration", "qualities",
-                    "subtitles", "webpage", "is_playlist", "playlist_count",
-                    "downloaded", "total", "audio_fmt", "audio_q", "embed_thumb", "subs", "sub_lang",
-                    "trim_start", "trim_end")
-            return self.send_json({
-                "items": [{**{k: ITEMS[i].get(k) for k in keys},
-                           "thumb": bool(ITEMS[i].get("thumb_url"))} for i in ORDER if i in ITEMS],
-                "done": DONE[:50],
-                "folder": DEST,
-                "stats": {
-                    "pending": sum(1 for i in ORDER if ITEMS.get(i, {}).get("state") == "pending"),
-                    "downloading": sum(1 for i in ORDER if ITEMS.get(i, {}).get("state") in ("downloading", "processing", "waiting")),
-                    "done": len(DONE),
-                    "total_size": sum(x.get("size") or 0 for x in DONE),
-                },
-                "config": CFG,
-            })
+            return self.send_json(queue_snapshot())
         if p == "/api/thumb":
             it = ITEMS.get(q.get("id"))
             if it and it.get("thumb_url"):
@@ -412,60 +494,70 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/history":
             return self.send_json({"items": DONE[:200]})
         if p == "/api/file":
-            name = q.get("name", "")
-            path = os.path.join(DEST, os.path.basename(name))
-            if os.path.exists(path):
+            path = os.path.join(DEST, os.path.basename(q.get("name", "")))
+            if os.path.isfile(path):
                 return self.send_file(path, "application/octet-stream")
             return self.send_error(404)
         return self.send_error(404)
 
-    def do_POST(self):
-        data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+    def _post(self):
+        global DEST
+        try:
+            data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            return self.send_json({"error": "Petición inválida"}, 400)
         p = self.path
 
         if p == "/api/add":
-            text = data.get("text", "")
+            text = data.get("text", "") or ""
             urls = list(dict.fromkeys(re.findall(r"https?://[^\s<>\"']+", text)))
             if not urls:
                 return self.send_json(
                     {"error": "No encontré ningún enlace. Pega enlaces que empiecen con http:// o https://"}, 400)
-            known = {ITEMS[i]["url"] for i in ORDER if i in ITEMS}
+            known = {clean_url(ITEMS[i]["url"]) for i in list(ORDER) if i in ITEMS}
             n = 0
             for u in urls:
                 cu = clean_url(u)
                 if cu in known:
                     continue
+                known.add(cu)
                 iid = uuid.uuid4().hex[:10]
-                ITEMS[iid] = {
+                try:
+                    aq = int(data.get("audio_q", 192))
+                except Exception:
+                    aq = 192
+                it = {
                     "id": iid, "url": u, "title": u, "state": "pending", "pct": 0,
-                    "kind": data.get("kind", "video"),
-                    "height": data.get("height", ""),
+                    "kind": "audio" if data.get("kind") == "audio" else "video",
+                    "height": str(data.get("height", "") or ""),
                     "info": "loading", "qualities": [],
                     "audio_fmt": data.get("audio_fmt", "mp3"),
-                    "audio_q": data.get("audio_q", 192),
+                    "audio_q": aq,
                     "embed_thumb": data.get("embed_thumb", True),
                     "subs": data.get("subs", False),
                     "sub_lang": data.get("sub_lang", "es"),
                     "trim_start": data.get("trim_start"),
                     "trim_end": data.get("trim_end"),
                 }
-                ORDER.append(iid)
-                threading.Thread(target=fetch_info, args=(ITEMS[iid],), daemon=True).start()
+                with LOCK:
+                    ITEMS[iid] = it
+                    ORDER.append(iid)
+                threading.Thread(target=fetch_info, args=(it,), daemon=True).start()
                 n += 1
             return self.send_json({"added": n})
 
         if p in ("/api/remove", "/api/retry"):
             it = ITEMS.get(data.get("id"))
-            if it and p == "/api/retry" and it["state"] == "error":
-                it.update(state="waiting", error=None, pct=0, cancel=False)
-                Q.put(it["id"])
+            if it and p == "/api/retry":
+                if it["state"] == "error":
+                    it.update(state="waiting", error=None, pct=0, cancel=False)
+                    Q.put(it["id"])
             elif it:
-                if it["state"] in ("downloading", "processing"):
-                    it["cancel"] = True
-                else:
-                    ITEMS.pop(it["id"], None)
-                    if it["id"] in ORDER:
-                        ORDER.remove(it["id"])
+                it["cancel"] = True
+                if it["state"] not in ("downloading", "processing"):
+                    drop(it["id"])
             return self.send_json({"ok": True})
 
         if p == "/api/set":
@@ -498,8 +590,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/clear_pending":
             for i in list(ORDER):
                 if ITEMS.get(i, {}).get("state") == "pending":
-                    ITEMS.pop(i, None)
-                    ORDER.remove(i)
+                    ITEMS[i]["cancel"] = True
+                    drop(i)
             return self.send_json({"ok": True})
 
         if p == "/api/clear_done":
@@ -512,27 +604,33 @@ class H(BaseHTTPRequestHandler):
             return self.send_json({"ok": True})
 
         if p == "/api/config":
-            for k in ("dest", "workers", "theme", "notify", "history"):
-                if k in data:
-                    CFG[k] = data[k]
-            save_cfg(CFG)
             if data.get("dest"):
-                global DEST
-                DEST = data["dest"]
-                os.makedirs(DEST, exist_ok=True)
-            if data.get("workers"):
-                global WORKER_COUNT
-                while WORKER_COUNT < int(data["workers"]):
-                    threading.Thread(target=worker, daemon=True).start()
-                    WORKER_COUNT += 1
+                try:
+                    os.makedirs(data["dest"], exist_ok=True)
+                    DEST = data["dest"]
+                except Exception:
+                    return self.send_json({"error": "No se pudo crear esa carpeta de descarga."}, 400)
+            for k in ("dest", "theme", "notify", "history"):
+                if k in data and (k != "dest" or data[k]):
+                    CFG[k] = data[k]
+            if "workers" in data:
+                try:
+                    CFG["workers"] = max(1, min(MAX_WORKERS, int(data["workers"])))
+                except Exception:
+                    pass
+                with SLOT:
+                    SLOT.notify_all()
+            save_cfg(CFG)
             return self.send_json({"ok": True, "config": CFG})
 
         if p == "/api/cancel_all":
             CANCEL.set()
-            for it in ITEMS.values():
+            for it in list(ITEMS.values()):
                 if it["state"] in ("downloading", "processing", "waiting"):
                     it["cancel"] = True
-            threading.Timer(1.0, CANCEL.clear).start()
+                    if it["state"] == "waiting":
+                        drop(it["id"])
+            threading.Timer(1.5, CANCEL.clear).start()
             return self.send_json({"ok": True})
 
         if p == "/api/retry_all":
@@ -549,7 +647,7 @@ class H(BaseHTTPRequestHandler):
             if name:
                 path = os.path.join(DEST, os.path.basename(name))
                 try:
-                    if os.path.exists(path):
+                    if os.path.isfile(path):
                         os.remove(path)
                 except Exception:
                     pass
@@ -559,25 +657,37 @@ class H(BaseHTTPRequestHandler):
 
         return self.send_error(404)
 
-WORKER_COUNT = 0
+
+def make_server():
+    host = "0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1"
+    if os.environ.get("PORT"):
+        return ThreadingHTTPServer((host, int(os.environ["PORT"])), H), host
+    last = None
+    for port in range(5000, 5011):
+        try:
+            return ThreadingHTTPServer((host, port), H), host
+        except OSError as e:
+            last = e
+    raise last
+
 
 if __name__ == "__main__":
-    workers = int(CFG.get("workers", 3))
-    for _ in range(workers):
+    for _ in range(MAX_WORKERS):
         threading.Thread(target=worker, daemon=True).start()
-        WORKER_COUNT += 1
-        
-    if not os.environ.get("RENDER"):
-        threading.Timer(1.0, lambda: webbrowser.open("http://localhost:5000")).start()
-        
-    port = int(os.environ.get("PORT", 5000))
-    
+
+    server, host = make_server()
+    port = server.server_address[1]
+    if not os.environ.get("RENDER") and not os.environ.get("NO_BROWSER"):
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+
     print("=" * 60)
     print("  VidBajar Pro — listo")
     print("  No cierres esta ventana.")
     print("  Guardando en:", DEST)
-    print("  Workers:", workers, "| Historial:", CFG.get("history", True))
-    print(f"  Escuchando en 0.0.0.0:{port}")
+    print("  Descargas simultáneas:", CFG.get("workers", 3), "| Historial:", CFG.get("history", True))
+    print(f"  Abre: http://localhost:{port}")
     print("=" * 60)
-    
-    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass

@@ -157,14 +157,18 @@ main{max-width:960px;margin:22px auto;padding:0 16px}
       <button class="pill" id="paste" type="button">📋 Pegar</button>
       <button class="pill" id="clipBtn" type="button" title="Detectar enlace del portapapeles">🔎 Detectar</button>
       <select id="q" aria-label="Formato por defecto">
-        <option value="video|">MP4 · mejor calidad</option>
-        <option value="video|2160">MP4 · 4K</option>
-        <option value="video|1080">MP4 · 1080p</option>
-        <option value="video|720">MP4 · 720p</option>
-        <option value="video|480">MP4 · 480p</option>
-        <option value="audio|">MP3 · solo audio</option>
+        <option value="video|">🎬 Video · Mejor calidad disponible</option>
+        <option value="video|4320">🎬 Video · 8K (4320p)</option>
+        <option value="video|2160">🎬 Video · 4K Ultra HD (2160p)</option>
+        <option value="video|1440">🎬 Video · 2K QHD (1440p)</option>
+        <option value="video|1080">🎬 Video · Full HD (1080p)</option>
+        <option value="video|720" selected>🎬 Video · HD (720p)</option>
+        <option value="video|480">🎬 Video · SD (480p)</option>
+        <option value="video|360">🎬 Video · 360p</option>
+        <option value="video|240">🎬 Video · 240p</option>
+        <option value="audio|">🎵 Solo audio</option>
       </select>
-      <select id="audioFmt" aria-label="Formato de audio">
+      <select id="audioFmt" aria-label="Formato de audio (si eliges solo audio)">
         <option value="mp3|192">MP3 · 192 kbps</option>
         <option value="mp3|320">MP3 · 320 kbps</option>
         <option value="m4a|256">M4A · 256 kbps</option>
@@ -242,7 +246,10 @@ const $ = id => document.getElementById(id);
 const post = (u, b) => fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(b||{})}).then(r=>r.json()).catch(()=>({}));
 const el = (t,c,x) => {const e=document.createElement(t); if(c)e.className=c; if(x!==undefined)e.textContent=x; return e};
 const mb = n => { if(!n) return ""; if(n>=1e9) return (n/1e9).toFixed(1)+" GB"; if(n>=1e6) return Math.round(n/1e6)+" MB"; return Math.round(n/1e3)+" KB"; };
-const lab = h => h>=2160 ? "4K ("+h+"p)" : h>=1440 ? "2K ("+h+"p)" : h+"p";
+const lab = (h, s) => { s = s || h;
+  const n = s>=4320 ? "8K" : s>=2160 ? "4K" : s>=1440 ? "2K" : s>=1080 ? "Full HD" : s>=720 ? "HD" : s>=480 ? "SD" : "";
+  return (n ? n+" · " : "") + s + "p" + (s!==h ? " (vertical)" : ""); };
+const AUDIO_OPTS = [["mp3|192","MP3 · 192 kbps"],["mp3|320","MP3 · 320 kbps (alta)"],["m4a|256","M4A · 256 kbps"],["opus|160","Opus · 160 kbps"],["wav|0","WAV · sin pérdida"],["flac|0","FLAC · sin pérdida"]];
 const dur = s => { if(!s) return ""; s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor(s%3600/60), r=s%60; return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(r).padStart(2,"0") };
 let toastTimer;
 function toast(t, kind){ const T=$("toast"); T.textContent=t; T.className="toast on "+(kind||""); clearTimeout(toastTimer); toastTimer=setTimeout(()=>T.classList.remove("on"), 2600); }
@@ -275,7 +282,8 @@ $("cfgSave").onclick = async () => {
     notify: $("cfgNotify").checked,
     history: $("cfgHistory").checked,
   };
-  await post("/api/config", b);
+  const rc = await post("/api/config", b);
+  if(rc.error){ toast(rc.error, "err"); return; }
   cfg = {...cfg, ...b};
   applyTheme(b.theme);
   $("cfgModal").classList.remove("on");
@@ -331,32 +339,35 @@ function build(i){
   r.img.onerror = () => r.img.classList.add("none");
   r.dur = el("span","dur"); r.thw.append(r.img, r.dur);
   const bd = el("div","bd"); r.t = el("div","t"); r.meta = el("div","meta");
-  const ctl = el("div","ctl");
+  const ctl = el("div","ctl"); r.ctl = ctl; r.cur = i;
   const seg = el("div","seg"); r.bv = el("button",null,"MP4"); r.ba = el("button",null,"MP3");
   seg.append(r.bv, r.ba);
-  r.bv.onclick = () => post("/api/set",{id:i.id,kind:"video"}).then(refresh);
-  r.ba.onclick = () => post("/api/set",{id:i.id,kind:"audio"}).then(refresh);
+  r.bv.onclick = () => post("/api/set",{id:r.cur.id,kind:"video"}).then(refresh);
+  r.ba.onclick = () => post("/api/set",{id:r.cur.id,kind:"audio"}).then(refresh);
   r.sel = el("select"); r.sel.setAttribute("aria-label","Calidad");
-  r.sel.onchange = () => post("/api/set",{id:i.id,height:r.sel.value}).then(refresh);
+  r.sel.onchange = () => post("/api/set",{id:r.cur.id,height:r.sel.value}).then(refresh);
+  r.asel = el("select"); r.asel.setAttribute("aria-label","Formato de audio");
+  AUDIO_OPTS.forEach(o => { const op = el("option",null,o[1]); op.value = o[0]; r.asel.append(op); });
+  r.asel.onchange = () => { const [f,qq] = r.asel.value.split("|"); post("/api/set",{id:r.cur.id,audio_fmt:f,audio_q:parseInt(qq)||0}).then(refresh); };
   r.size = el("span","s");
   r.trimBtn = el("button","sbtn","✂️ Recortar");
-  r.trimBtn.onclick = () => openTrim(i);
+  r.trimBtn.onclick = () => openTrim(r.cur);
   r.subsBtn = el("button","sbtn","💬 Subtítulos");
-  r.subsBtn.onclick = () => post("/api/set",{id:i.id,subs:!i.subs}).then(refresh);
-  ctl.append(seg, r.sel, r.size, r.subsBtn, r.trimBtn);
+  r.subsBtn.onclick = () => post("/api/set",{id:r.cur.id,subs:!r.cur.subs}).then(refresh);
+  ctl.append(seg, r.sel, r.asel, r.size, r.subsBtn, r.trimBtn);
 
   r.prog = el("div","prog"); const bar = el("div","bar"); r.fill = el("i"); bar.append(r.fill);
   r.bar = bar; r.st = el("div","s");
   r.rt = el("button","sbtn","↻ Reintentar");
-  r.rt.onclick = () => post("/api/retry",{id:i.id}).then(refresh);
+  r.rt.onclick = () => post("/api/retry",{id:r.cur.id}).then(refresh);
   r.play = el("button","sbtn","▶ Iniciar");
-  r.play.onclick = () => post("/api/start_one",{id:i.id}).then(refresh);
+  r.play.onclick = () => post("/api/start_one",{id:r.cur.id}).then(refresh);
   r.prog.append(bar, r.st);
   const row2 = el("div","ctl"); row2.append(r.play, r.rt);
   r.row2 = row2;
 
   r.x = el("button","x","✕");
-  r.x.onclick = () => post("/api/remove",{id:i.id}).then(refresh);
+  r.x.onclick = () => post("/api/remove",{id:r.cur.id}).then(refresh);
   bd.append(r.t, r.meta, ctl, r.prog, row2);
   w.append(r.thw, bd, r.x);
   w._r = r;
@@ -364,7 +375,7 @@ function build(i){
 }
 
 function upd(w, i){
-  const r = w._r, pend = i.state==="pending";
+  const r = w._r, pend = i.state==="pending"; r.cur = i;
   r.t.textContent = i.title || i.url;
   if(i.thumb && !r.img.dataset.s){ r.img.src = "/api/thumb?id="+i.id; r.img.dataset.s="1"; }
   r.dur.textContent = dur(i.duration);
@@ -389,26 +400,29 @@ function upd(w, i){
     r.sig = sig; r.sel.replaceChildren();
     const opts = [["","Mejor calidad"]];
     const list = i.qualities && i.qualities.length
-      ? i.qualities.map(q => [String(q.h), lab(q.h) + (q.size?" · "+mb(q.size):"") + (q.fps?" · "+q.fps+"fps":"")])
-      : (i.info==="loading" ? [] : [2160,1080,720,480,360].map(h=>[String(h),lab(h)]));
+      ? i.qualities.map(q => [String(q.h), lab(q.h, q.s) + (q.size?" · "+mb(q.size):"") + (q.fps>30?" · "+Math.round(q.fps)+"fps":"")])
+      : (i.info==="loading" ? [] : [4320,2160,1440,1080,720,480,360,240].map(h=>[String(h),lab(h)]));
     list.forEach(o => opts.push(o));
-    if(i.height && !opts.some(o=>o[0]===String(i.height))) opts.push([String(i.height), i.height+"p"]);
+    if(i.height && !opts.some(o=>o[0]===String(i.height))) opts.push([String(i.height), lab(Number(i.height))]);
     opts.forEach(o => { const op = el("option",null,o[1]); op.value = o[0]; r.sel.append(op); });
   }
   if(document.activeElement !== r.sel) r.sel.value = i.height || "";
   r.sel.style.display = i.kind==="audio" ? "none" : "";
   r.sel.disabled = i.info==="loading";
+  r.asel.style.display = i.kind==="audio" ? "" : "none";
+  if(document.activeElement !== r.asel) r.asel.value = (i.audio_fmt||"mp3")+"|"+(i.audio_q||0);
 
   const q = i.qualities && (i.qualities.find(q=>String(q.h)===String(i.height)) || (!i.height ? i.qualities[0] : null));
   if(i.info==="loading") r.size.textContent = "Leyendo video…";
   else if(i.info==="fail") r.size.textContent = "⚠ " + (i.info_error||"Error");
-  else if(i.kind==="audio") r.size.textContent = "MP3 · 192 kbps";
+  else if(i.kind==="audio") r.size.textContent = "";
   else if(q && q.size) r.size.textContent = "≈ " + mb(q.size);
   else r.size.textContent = "";
 
-  r.x.textContent = i.state==="downloading" ? "Cancelar" : "✕";
-  r.x.className = i.state==="downloading" ? "x txt" : "x";
-  r.x.title = i.state==="downloading" ? "Cancelar descarga" : "Quitar de la lista";
+  const busy = i.state==="downloading" || i.state==="processing";
+  r.x.textContent = busy ? "Cancelar" : "✕";
+  r.x.className = busy ? "x txt" : "x";
+  r.x.title = busy ? "Cancelar descarga" : "Quitar de la lista";
 
   const err = i.state==="error";
   const active = i.state==="downloading" || i.state==="processing";
@@ -449,8 +463,8 @@ function render(d){
   items.forEach(i => {
     if(!nodes[i.id]) nodes[i.id] = build(i);
     upd(nodes[i.id], i);
-    if(nodes[i.id].parentNode !== L) L.append(nodes[i.id]);
   });
+  items.forEach((i, idx) => { const n = nodes[i.id]; if(L.children[idx] !== n) L.insertBefore(n, L.children[idx] || null); });
   const pend = d.items.filter(i=>i.state==="pending").length;
   $("all").textContent = "Descargar todos" + (pend ? " ("+pend+")" : "");
   $("all").disabled = !pend;
@@ -470,7 +484,10 @@ function render(d){
   });
 
   // done
-  const D = $("done"); D.replaceChildren();
+  const D = $("done");
+  const dsig = JSON.stringify(d.done.map(x=>[x.name,x.size,x.date]));
+  if(dsig === window._dsig){ $("folder").textContent = "Se guardan en: " + (d.folder||""); return; }
+  window._dsig = dsig; D.replaceChildren();
   $("doneCnt").textContent = d.done.length ? "("+d.done.length+")" : "";
   if(!d.done.length) D.append(el("p","empty","Aquí aparecerán al terminar."));
   d.done.forEach(i => {
@@ -503,7 +520,10 @@ function openTrim(i){
   if(s === null) return;
   const e = prompt("Segundo FIN (vacío = hasta el final; duración = "+total+"s):", i.trim_end || "");
   if(e === null) return;
-  post("/api/set", {id:i.id, trim_start: parseFloat(s)||0, trim_end: e ? parseFloat(e) : null}).then(() => {
+  const ts = Math.max(0, parseFloat(String(s).replace(",","."))||0);
+  let te = e ? parseFloat(String(e).replace(",",".")) : null;
+  if(te !== null && (isNaN(te) || te <= ts)) te = null;
+  post("/api/set", {id:i.id, trim_start: ts, trim_end: te}).then(() => {
     toast("Recorte aplicado al descargar", "ok");
     refresh();
   });
@@ -534,7 +554,7 @@ document.addEventListener("drop", async e => {
 
 // ---------- keyboard shortcuts ----------
 document.addEventListener("keydown", e => {
-  if(e.target.matches("input, textarea, select")) return;
+  if(!e.altKey && e.key!=="Escape" && e.target.matches("input, textarea, select")) return;
   if(e.altKey && e.key.toLowerCase()==="t"){ e.preventDefault(); $("themeBtn").click(); }
   if(e.altKey && e.key===","){ e.preventDefault(); $("cfgBtn").click(); }
   if(e.altKey && e.key.toLowerCase()==="n"){ e.preventDefault(); $("txt").focus(); }
@@ -543,31 +563,35 @@ document.addEventListener("keydown", e => {
 });
 
 // ---------- polling + notifications ----------
-let lastDone = 0, notifAsked = false;
+let lastDone = null, notifAsked = false, failCount = 0;
+const canNotify = () => "Notification" in window;
 async function refresh(){
-  try{
+  let d;
+  try{                                   // 1) conexión con el servidor
     const res = await fetch("/api/queue");
     if(!res.ok) throw new Error("HTTP " + res.status);
-    const d = await res.json();
+    d = await res.json();
+    failCount = 0;
+  }catch(e){
+    if(++failCount >= 3) say("Se perdió la conexión con el programa. ¿Sigue abierta la ventana negra?", "err");
+    return;
+  }
+  try{                                   // 2) dibujar (un fallo aquí NO es un fallo de conexión)
     render(d);
-    if(cfg.notify && d.stats && d.stats.done !== lastDone && lastDone!==0 && d.stats.done > lastDone){
+  }catch(e){
+    console.error("Error al dibujar la lista:", e);
+  }
+  try{
+    if(cfg.notify && canNotify() && d.stats && lastDone !== null && d.stats.done > lastDone){
       if(!notifAsked && Notification.permission === "default"){
         try{ await Notification.requestPermission(); }catch(e){}
         notifAsked = true;
       }
-      if(Notification.permission === "granted"){
-        try{ new Notification("VidBajar", {body:"Descarga completada ✓", silent:false}); }catch(e){}
-      }
+      if(Notification.permission === "granted") new Notification("VidBajar", {body:"Descarga completada ✓"});
     }
-    if(d.stats) lastDone = d.stats.done;
-  }catch(e){
-    // Silenciar el error de conexión temporal al inicio
-    if(!window.firstLoadDone) return;
-    say("Se perdió la conexión con el programa. ¿Sigue abierta la ventana negra?", "err");
-  }
+  }catch(e){}
+  if(d.stats) lastDone = d.stats.done;
 }
-window.firstLoadDone = false;
-setTimeout(() => { window.firstLoadDone = true; }, 2000); // Dar 2 segundos de gracia al inicio
 
 refresh();
 setInterval(refresh, 800);

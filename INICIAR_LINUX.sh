@@ -1,4 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 cd "$(dirname "$0")"
-python3 -m pip install -U --disable-pip-version-check --prefer-binary yt-dlp curl_cffi imageio-ffmpeg
-python3 app.py
+PY=python3; command -v python3 >/dev/null || PY=python
+echo "Instalando y actualizando dependencias..."
+$PY -m pip install -U --disable-pip-version-check --prefer-binary -r requirements.txt || echo "[AVISO] No se pudieron actualizar dependencias."
+echo; echo "Iniciando VidBajar Pro..."
+$PY app.py

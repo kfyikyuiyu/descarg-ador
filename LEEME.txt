@@ -6,6 +6,14 @@ VIDBAJAR PRO — Guía rápida
 2) Ejecuta INICIAR_WINDOWS.bat / INICIAR_MAC.command / INICIAR_LINUX.sh
 3) Se abre el navegador. Pega enlaces (uno por línea) → elige calidad → Agregar → Descargar todos.
 
+CALIDAD
+-------
+Arriba eliges la calidad por defecto: Mejor, 8K, 4K, 2K, Full HD, HD, 480p, 360p, 240p o solo audio.
+Cada video de la lista tiene su propio selector con las calidades REALES que ofrece ese video
+(y su tamaño aproximado), así puedes subirla o bajarla antes de descargar.
+Si el video no llega a la calidad pedida (por ejemplo 4K), baja a la mejor disponible.
+Para videos de más de 1080p se necesita mucho espacio y tiempo de descarga.
+
 NOVEDADES
 ---------
 • Descarga paralela (3 a 8 simultáneas, configurable).
@@ -27,6 +35,11 @@ NOVEDADES
 • Eliminar archivos del disco desde el historial.
 • Estadísticas: pendientes, activas, completados, tamaño total.
 
+YOUTUBE
+-------
+YouTube cambia seguido. Si falla, actualiza (los .bat/.sh ya lo hacen solos al iniciar).
+Para mejores resultados instala Node.js (https://nodejs.org) o Deno: el programa lo usa solo.
+
 SI UN VIDEO PIDE LOGIN
 ---------------------
 Abre la plataforma en Firefox o Chrome, inicia sesión, cierra ese navegador por completo
@@ -35,5 +48,6 @@ y vuelve a intentar. El programa detectará tu sesión automáticamente.
 CARPETA DE DESCARGA POR DEFECTO
 -------------------------------
 Descargas/VidBajar (cambiable desde ⚙️ Ajustes).
+Si el puerto 5000 está ocupado, el programa usa el siguiente libre y abre el navegador ahí.
 
 Usa solo videos tuyos o con permiso.

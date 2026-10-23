@@ -13,7 +13,14 @@ if not defined PY (
 )
 echo Instalando y actualizando dependencias...
 %PY% -m pip install -U --disable-pip-version-check --prefer-binary -r requirements.txt
+if errorlevel 1 (
+  echo.
+  echo [AVISO] No se pudieron actualizar las dependencias. Revisa tu conexion a internet.
+  echo Se intentara iniciar de todos modos con lo que ya este instalado...
+)
 echo.
 echo Iniciando VidBajar Pro...
 %PY% app.py
+echo.
+echo El programa se cerro. Si ves un error arriba, copialo para pedir ayuda.
 pause
