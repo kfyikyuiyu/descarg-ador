@@ -1,16 +1,39 @@
-DESCARGADOR DE VIDEOS - 3 PASOS
+VIDBAJAR PRO — Guía rápida
+==========================
 
-1) Instala Python (solo una vez): https://www.python.org/downloads/
+1) Instala Python (una vez): https://www.python.org/downloads/
    En Windows marca "Add Python to PATH".
-2) Haz doble clic en INICIAR_WINDOWS.bat (Mac: INICIAR_MAC.command, Linux: INICIAR_LINUX.sh)
-3) Se abre la pagina sola. Pega UNO O VARIOS enlaces (uno por linea), elige la calidad y pulsa "Agregar a la lista" y luego "Descargar todos".
-   Los videos se guardan en: Descargas\VidBajar (boton "Abrir carpeta" en la pagina).
+2) Ejecuta INICIAR_WINDOWS.bat / INICIAR_MAC.command / INICIAR_LINUX.sh
+3) Se abre el navegador. Pega enlaces (uno por línea) → elige calidad → Agregar → Descargar todos.
 
-SI UN VIDEO PIDE "INICIAR SESION" (TikTok con contenido sensible, edad, etc.):
- - Abre TikTok en Firefox o Chrome e INICIA SESION.
- - Cierra ese navegador por completo y vuelve a intentar.
- - El programa usa tu sesion automaticamente.
- - Si usas Chrome/Edge y sigue fallando: usa Firefox para iniciar sesion.
+NOVEDADES
+---------
+• Descarga paralela (3 a 8 simultáneas, configurable).
+• Reanudable (si se corta, sigue donde quedó).
+• Historial persistente: recuerda lo descargado aunque reinicies.
+• Tema claro/oscuro/automático.
+• Notificaciones del sistema al terminar.
+• Atajos: Alt+T tema, Alt+, ajustes, Alt+N enfocar caja, Alt+D descargar todo.
+• Arrastra enlaces desde el navegador a la ventana.
+• Recorte de video (segundos inicio/fin).
+• Subtítulos opcionales (es/en).
+• Embed de carátula en MP3.
+• Formatos de audio: MP3, M4A, Opus, WAV, FLAC.
+• Detector de enlace en el portapapeles.
+• Filtro y ordenación de la cola.
+• Barra de progreso con velocidad, tamaño descargado/total y ETA.
+• Botón Cancelar individual y Cancelar todo.
+• Reintentar todas las que fallaron de una vez.
+• Eliminar archivos del disco desde el historial.
+• Estadísticas: pendientes, activas, completados, tamaño total.
 
-Para cerrar el programa, cierra la ventana negra.
+SI UN VIDEO PIDE LOGIN
+---------------------
+Abre la plataforma en Firefox o Chrome, inicia sesión, cierra ese navegador por completo
+y vuelve a intentar. El programa detectará tu sesión automáticamente.
+
+CARPETA DE DESCARGA POR DEFECTO
+-------------------------------
+Descargas/VidBajar (cambiable desde ⚙️ Ajustes).
+
 Usa solo videos tuyos o con permiso.

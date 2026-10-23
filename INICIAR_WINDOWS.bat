@@ -11,8 +11,8 @@ if not defined PY (
   pause
   exit /b
 )
-echo Instalando y actualizando (necesario para que TikTok y YouTube funcionen)...
-%PY% -m pip install -U --disable-pip-version-check --prefer-binary yt-dlp curl_cffi imageio-ffmpeg
+echo Actualizando componentes (necesario para que TikTok y YouTube funcionen)...
+%PY% -m pip install -U --disable-pip-version-check --prefer-binary -r requirements.txt
 echo.
 %PY% app.py
 pause
