@@ -584,7 +584,7 @@ if __name__ == "__main__":
     print("=" * 60)
     ThreadingHTTPServer(("127.0.0.1", 5000), H).serve_forever()
 
-    if __name__ == "__main__":
+if __name__ == "__main__":
     # ... (tus hilos worker)
     
     # --- CORRECCIÓN PARA RENDER ---
