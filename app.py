@@ -151,7 +151,6 @@ def friendly(e):
     return "No se pudo procesar el enlace. " + m[-220:]
 
 def sizes(d):
-    """Devuelve lista de calidades disponibles con tamaño estimado."""
     out, seen = [], set()
     for f in (d.get("formats") or []):
         h = f.get("height")
@@ -189,7 +188,6 @@ def fetch_info(it):
                 is_playlist=bool(d.get("_type") == "playlist"),
                 playlist_count=len(d.get("entries") or []) if d.get("_type") == "playlist" else 0,
             )
-            # subtítulos
             subs = list((d.get("subtitles") or {}).keys())
             it["subtitles"] = subs[:10]
             h = str(it.get("height") or "")
@@ -267,13 +265,6 @@ def process(it):
             opts.update(writesubtitles=True, writeautomaticsub=True,
                         subtitleslangs=["es", "en"] if not it.get("sub_lang") else [it["sub_lang"]],
                         subtitlesformat="srt")
-        if it.get("trim_start") or it.get("trim_end"):
-            opts.update(
-                download_ranges=None,
-                postprocessor_args={
-                    "ffmpeg": ["-ss", str(it.get("trim_start") or 0), "-to", str(it.get("trim_end") or "999999")]
-                } if False else None,
-            )
 
     try:
         with DL_SEM:
@@ -325,9 +316,12 @@ def worker():
 def open_folder(path=None):
     p = path or DEST
     if sys.platform.startswith("win"):
-        os.startfile(p)
+        try: os.startfile(p)
+        except: pass
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", p])
     else:
-        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", p])
+        subprocess.Popen(["xdg-open", p])
 
 # ---------- HTTP ----------
 class H(BaseHTTPRequestHandler):
@@ -418,7 +412,6 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/history":
             return self.send_json({"items": DONE[:200]})
         if p == "/api/file":
-            # descargar archivo local (validación de path)
             name = q.get("name", "")
             path = os.path.join(DEST, os.path.basename(name))
             if os.path.exists(path):
@@ -528,7 +521,6 @@ class H(BaseHTTPRequestHandler):
                 DEST = data["dest"]
                 os.makedirs(DEST, exist_ok=True)
             if data.get("workers"):
-                # añadir workers si aumentó
                 global WORKER_COUNT
                 while WORKER_COUNT < int(data["workers"]):
                     threading.Thread(target=worker, daemon=True).start()
@@ -567,7 +559,6 @@ class H(BaseHTTPRequestHandler):
 
         return self.send_error(404)
 
-
 WORKER_COUNT = 0
 
 if __name__ == "__main__":
@@ -575,27 +566,21 @@ if __name__ == "__main__":
     for _ in range(workers):
         threading.Thread(target=worker, daemon=True).start()
         WORKER_COUNT += 1
-    threading.Timer(1.0, lambda: webbrowser.open("http://localhost:5000")).start()
-    print("=" * 60)
-    print("  VidBajar Pro — listo en http://localhost:5000")
-    print("  No cierres esta ventana.")
-    print("  Guardando en:", DEST)
-    print("  Workers:", workers, "| Historial:", CFG.get("history", True))
-    print("=" * 60)
-    ThreadingHTTPServer(("127.0.0.1", 5000), H).serve_forever()
-
-if __name__ == "__main__":
-    # ... (tus hilos worker)
-    
-    # --- CORRECCIÓN PARA RENDER ---
-    import os
+        
+    # Si NO estamos en Render, abrimos el navegador local
+    if not os.environ.get("RENDER"):
+        threading.Timer(1.0, lambda: webbrowser.open("http://localhost:5000")).start()
+        
+    # Render asigna el puerto en la variable de entorno PORT. Si no existe, usa 5000.
     port = int(os.environ.get("PORT", 5000))
     
     print("=" * 60)
-    print(f"  VidBajar Pro — listo en http://0.0.0.0:{port}")
+    print("  VidBajar Pro — listo")
     print("  No cierres esta ventana.")
     print("  Guardando en:", DEST)
+    print("  Workers:", workers, "| Historial:", CFG.get("history", True))
+    print(f"  Escuchando en 0.0.0.0:{port}")
     print("=" * 60)
     
-    # Escucha en 0.0.0.0 en lugar de 127.0.0.1
+    # EL CAMBIO CRÍTICO: 0.0.0.0 en lugar de 127.0.0.1
     ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
