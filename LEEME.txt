@@ -6,6 +6,19 @@ VIDBAJAR PRO — Guía rápida
 2) Ejecuta INICIAR_WINDOWS.bat / INICIAR_MAC.command / INICIAR_LINUX.sh
 3) Se abre el navegador. Pega enlaces (uno por línea) → elige calidad → Agregar → Descargar todos.
 
+USARLO EN iPHONE / ANDROID / PC DESDE INTERNET (Render, etc.)
+-------------------------------------------------------------
+Al pulsar «Descargar todos», cada video se descarga en el servidor y, cuando termina,
+el navegador lo GUARDA SOLO en tu dispositivo (carpeta Descargas).
+  • iPhone: Safari pregunta «¿Descargar?» → toca Descargar. Luego: app Archivos › Descargas.
+  • Android: carpeta Descargas (Chrome puede pedir permiso para varias descargas: Permitir).
+  • PC: carpeta Descargas del navegador.
+Cada archivo tiene un botón ⬇ para guardarlo de nuevo, y arriba hay «⬇ Guardar todos».
+Se puede apagar en ⚙️ Ajustes (solo afecta a ESE dispositivo).
+Si lo usas en tu PC con INICIAR_WINDOWS.bat, los archivos ya van a la carpeta Descargas/VidBajar
+y el guardado automático viene apagado.
+En la nube, el servidor borra su copia a los 60 min (variable CLEAN_MINUTES para cambiarlo).
+
 CALIDAD
 -------
 Arriba eliges la calidad por defecto: Mejor, 8K, 4K, 2K, Full HD, HD, 480p, 360p, 240p o solo audio.

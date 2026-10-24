@@ -213,10 +213,12 @@ main{max-width:960px;margin:22px auto;padding:0 16px}
   <div class="card">
     <h3>Descargados <span class="s" id="doneCnt"></span>
       <button class="sbtn" id="clr">Limpiar historial</button>
-      <button class="pbtn" id="open">📂 Abrir carpeta</button>
+      <button class="pbtn" id="saveAll" title="Guardar todos los archivos en este dispositivo">⬇ Guardar todos</button>
+      <button class="sbtn" id="open">📂 Abrir carpeta</button>
     </h3>
     <div id="done"><p class="empty">Aquí aparecerán al terminar.</p></div>
     <p class="path" id="folder"></p>
+    <p class="path" id="devnote" style="display:none"></p>
   </div>
 
   <p class="note">TikTok sin marca de agua · reanudable · descargas paralelas · usa solo contenido tuyo o con permiso.</p>
@@ -237,6 +239,7 @@ main{max-width:960px;margin:22px auto;padding:0 16px}
     </select>
     <label><input type="checkbox" id="cfgNotify"> Notificaciones del sistema al terminar</label>
     <label><input type="checkbox" id="cfgHistory"> Guardar historial en disco</label>
+    <label title="Solo afecta a este dispositivo"><input type="checkbox" id="cfgAutoSave"> ⬇ Guardar automáticamente en ESTE dispositivo al terminar cada descarga</label>
     <div class="actions">
       <button class="sbtn" id="cfgCancel">Cancelar</button>
       <button class="pbtn" id="cfgSave">Guardar</button>
@@ -249,6 +252,13 @@ main{max-width:960px;margin:22px auto;padding:0 16px}
 
 <script>
 const $ = id => document.getElementById(id);
+const IS_LOCAL = ["localhost","127.0.0.1","::1","[::1]"].includes(location.hostname);
+const ls = { get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} } };
+const loadSet = k => { try{ return new Set(JSON.parse(ls.get(k)||"[]")); }catch(e){ return new Set(); } };
+const mine = loadSet("vb_mine"), saved = loadSet("vb_saved");   // descargas pedidas desde ESTE dispositivo / ya guardadas
+const persist = () => { ls.set("vb_mine", JSON.stringify([...mine].slice(-300))); ls.set("vb_saved", JSON.stringify([...saved].slice(-300))); };
+const autoSave = () => { const v = ls.get("vb_autosave"); return v === null ? !IS_LOCAL : v === "1"; };
+const claim = ids => { ids.forEach(i => mine.add(i)); persist(); };
 const post = (u, b) => fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(b||{})}).then(r=>r.json()).catch(()=>({}));
 const el = (t,c,x) => {const e=document.createElement(t); if(c)e.className=c; if(x!==undefined)e.textContent=x; return e};
 const mb = n => { if(!n) return ""; if(n>=1e9) return (n/1e9).toFixed(1)+" GB"; if(n>=1e6) return Math.round(n/1e6)+" MB"; return Math.round(n/1e3)+" KB"; };
@@ -303,6 +313,7 @@ $("cfgBtn").onclick = () => {
   $("cfgTheme").value = cfg.theme || "auto";
   $("cfgNotify").checked = !!cfg.notify;
   $("cfgHistory").checked = !!cfg.history;
+  $("cfgAutoSave").checked = autoSave();
   $("cfgModal").classList.add("on");
 };
 $("cfgCancel").onclick = () => $("cfgModal").classList.remove("on");
@@ -314,6 +325,7 @@ $("cfgSave").onclick = async () => {
     notify: $("cfgNotify").checked,
     history: $("cfgHistory").checked,
   };
+  ls.set("vb_autosave", $("cfgAutoSave").checked ? "1" : "0");
   const rc = await post("/api/config", b);
   if(rc.error){ toast(rc.error, "err"); return; }
   cfg = {...cfg, ...b};
@@ -350,13 +362,44 @@ $("go").onclick = async () => {
   refresh();
 };
 
+// ---------- guardar en el dispositivo (celular / PC) ----------
+// Con el programa en un servidor, el archivo queda allí; el navegador lo baja a tu dispositivo.
+const saveQ = []; let saving = false;
+function saveToDevice(e){
+  if(!e || !e.name) return;
+  saved.add(e.id || e.name); persist();
+  saveQ.push(e); pumpSave();
+}
+async function pumpSave(){
+  if(saving) return; saving = true;
+  while(saveQ.length){
+    const e = saveQ.shift();
+    try{
+      const a = document.createElement("a");
+      a.href = "/api/file?name=" + encodeURIComponent(e.name);
+      a.download = e.name; a.style.display = "none";
+      document.body.append(a); a.click(); a.remove();
+      toast("⬇ Guardando en tu dispositivo: " + e.name, "ok");
+    }catch(err){ toast("No se pudo guardar " + e.name + ". Usa el botón ⬇ de la lista.", "err"); }
+    await new Promise(r => setTimeout(r, 1500));      // pausa para que el navegador acepte varias descargas
+  }
+  saving = false;
+}
+$("saveAll").onclick = () => { const l = window._done || []; if(!l.length) return toast("No hay archivos para guardar","err"); [...l].reverse().forEach(saveToDevice); };
+if(IS_LOCAL){ $("saveAll").style.display = "none"; }
+else { $("open").style.display = "none";
+  $("devnote").style.display = "block";
+  $("devnote").textContent = "📱 Se guardan en la carpeta Descargas de este dispositivo (iPhone: app Archivos › Descargas; Android/PC: Descargas). Si el navegador pregunta, pulsa «Descargar»/«Permitir».";
+}
+
 // ---------- bulk ----------
-$("all").onclick = () => post("/api/start_all").then(()=>{ toast("Descargando…","ok"); refresh(); });
+$("all").onclick = () => { claim((window._pend||[]).filter(i=>i.state==="pending").map(i=>i.id));
+  post("/api/start_all").then(()=>{ toast("Descargando…","ok"); refresh(); }); };
 $("vac").onclick = () => post("/api/clear_pending").then(refresh);
 $("open").onclick = () => post("/api/open");
 $("clr").onclick = () => { if(confirm("¿Borrar todo el historial?")) post("/api/clear_done").then(refresh); };
 $("cancelAll").onclick = () => { if(confirm("¿Cancelar todas las descargas activas?")) post("/api/cancel_all").then(refresh); };
-$("retryAll").onclick = () => post("/api/retry_all").then(r=>{ if(r.retried) toast("Reintentando "+r.retried,"ok"); refresh(); });
+$("retryAll").onclick = () => { claim((window._pend||[]).filter(i=>i.state==="error").map(i=>i.id)); post("/api/retry_all").then(r=>{ if(r.retried) toast("Reintentando "+r.retried,"ok"); refresh(); }); };
 
 // ---------- filter/sort ----------
 let filterText = "", sortMode = "added";
@@ -391,9 +434,9 @@ function build(i){
   r.prog = el("div","prog"); const bar = el("div","bar"); r.fill = el("i"); bar.append(r.fill);
   r.bar = bar; r.st = el("div","s");
   r.rt = el("button","sbtn","↻ Reintentar");
-  r.rt.onclick = () => post("/api/retry",{id:r.cur.id}).then(refresh);
+  r.rt.onclick = () => { claim([r.cur.id]); post("/api/retry",{id:r.cur.id}).then(refresh); };
   r.play = el("button","sbtn","▶ Iniciar");
-  r.play.onclick = () => post("/api/start_one",{id:r.cur.id}).then(refresh);
+  r.play.onclick = () => { claim([r.cur.id]); post("/api/start_one",{id:r.cur.id}).then(refresh); };
   r.prog.append(bar, r.st);
   const row2 = el("div","ctl"); row2.append(r.play, r.rt);
   r.row2 = row2;
@@ -521,9 +564,11 @@ function render(d){
   });
 
   // done
+  window._pend = d.items; window._done = d.done;
+  if(autoSave()) [...d.done].reverse().forEach(x => { if(x.id && mine.has(x.id) && !saved.has(x.id) && x.name) saveToDevice(x); });
   const D = $("done");
   const dsig = JSON.stringify(d.done.map(x=>[x.name,x.size,x.date]));
-  if(dsig === window._dsig){ $("folder").textContent = "Se guardan en: " + (d.folder||""); return; }
+  if(dsig === window._dsig){ $("folder").textContent = IS_LOCAL ? "Se guardan en: " + (d.folder||"") : ""; return; }
   window._dsig = dsig; D.replaceChildren();
   $("doneCnt").textContent = d.done.length ? "("+d.done.length+")" : "";
   if(!d.done.length) D.append(el("p","empty","Aquí aparecerán al terminar."));
@@ -538,14 +583,21 @@ function render(d){
     const del = el("button",null,"🗑");
     del.title = "Eliminar del disco";
     del.onclick = () => { if(confirm("¿Eliminar \""+i.name+"\" del disco?")) post("/api/remove_done",{name:i.name}).then(refresh); };
-    const open = el("button",null,"📂");
-    open.title = "Mostrar en carpeta";
-    open.onclick = () => post("/api/open");
-    acts.append(open, del);
+    const dl = el("button",null,"⬇");
+    dl.title = "Guardar en este dispositivo";
+    dl.onclick = () => saveToDevice(i);
+    acts.append(dl);
+    if(IS_LOCAL){
+      const open = el("button",null,"📂");
+      open.title = "Mostrar en carpeta";
+      open.onclick = () => post("/api/open");
+      acts.append(open);
+    }
+    acts.append(del);
     w.append(acts);
     D.append(w);
   });
-  $("folder").textContent = "Se guardan en: " + (d.folder||"");
+  $("folder").textContent = IS_LOCAL ? "Se guardan en: " + (d.folder||"") : "";
 }
 
 // ---------- trim modal ----------

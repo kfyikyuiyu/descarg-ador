@@ -1,7 +1,7 @@
-import copy, importlib.metadata as imd, json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request, uuid, webbrowser
+import copy, importlib.metadata as imd, json, mimetypes, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request, uuid, webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import download_range_func
 import imageio_ffmpeg
@@ -391,6 +391,7 @@ def run_download(it):
         "concurrent_fragment_downloads": 8,
         "writethumbnail": False,
         "writeinfojson": False,
+        "updatetime": False,          # que la fecha del archivo sea la de la descarga
     }
     h = it.get("height", "")
     if it["kind"] == "audio":
@@ -451,6 +452,8 @@ def run_download(it):
         if path and it["kind"] == "video" and it.get("scale_to") and os.path.exists(path):
             upscale_file(it, path, int(it["scale_to"]))
         entry = {
+            "id": it["id"],
+            "ts": time.time(),
             "title": d.get("title") or it["url"],
             "name": os.path.basename(path) if path else "",
             "url": it["url"],
@@ -515,6 +518,26 @@ def do_update():
         UPDATE.update(state="done", msg=f"Actualizado a yt-dlp {new}. Cierra la ventana negra y vuelve a abrir el programa.")
     except Exception as e:
         UPDATE.update(state="error", msg="No se pudo actualizar: " + str(e)[:200])
+
+# ---------- limpieza de archivos en el servidor ----------
+CLEAN_MIN = int(os.environ.get("CLEAN_MINUTES", "60" if os.environ.get("RENDER") else "0") or 0)
+
+def janitor():
+    """En la nube los archivos se guardan en tu dispositivo; la copia del servidor se borra tras un rato."""
+    while True:
+        time.sleep(300)
+        try:
+            cutoff = time.time() - CLEAN_MIN * 60
+            old = [x for x in DONE if x.get("ts") and x["ts"] < cutoff]
+            for x in old:
+                p = os.path.join(DEST, os.path.basename(x.get("name") or ""))
+                if x.get("name") and os.path.isfile(p):
+                    os.remove(p)
+            if old:
+                DONE[:] = [x for x in DONE if x not in old]
+                save_history()
+        except Exception as e:
+            print("Limpieza:", e)
 
 # ---------- open folder ----------
 def open_folder(path=None):
@@ -583,6 +606,55 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(b)
+
+    def send_download(self, path):
+        """Envía el archivo como descarga (celular/PC): en bloques, con soporte de Range (reanudar)."""
+        try:
+            size = os.path.getsize(path)
+            f = open(path, "rb")
+        except Exception:
+            return self.send_error(404)
+        name = os.path.basename(path)
+        ascii_name = re.sub(r'[^\x20-\x7e]|["\\/]', "_", name) or "video.mp4"
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        start, end, code = 0, size - 1, 200
+        rng = self.headers.get("Range", "")
+        m = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
+        if m and (m.group(1) or m.group(2)) and size:
+            if m.group(1):
+                start = int(m.group(1))
+                end = int(m.group(2)) if m.group(2) else size - 1
+            else:                                   # últimos N bytes
+                start = max(0, size - int(m.group(2)))
+            end = min(end, size - 1)
+            if start > end:
+                f.close()
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+            code = 206
+        self.send_response(code)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Accept-Ranges", "bytes")
+        if code == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Disposition",
+                         f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            f.seek(start)
+            left = end - start + 1
+            while left > 0:
+                chunk = f.read(min(1024 * 1024, left))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                left -= len(chunk)
+        finally:
+            f.close()
 
     def do_GET(self):
         try:
@@ -655,8 +727,8 @@ class H(BaseHTTPRequestHandler):
             return self.send_json({"items": DONE[:200]})
         if p == "/api/file":
             path = os.path.join(DEST, os.path.basename(q.get("name", "")))
-            if os.path.isfile(path):
-                return self.send_file(path, "application/octet-stream")
+            if os.path.isfile(path) and not path.endswith((".part", ".ytdl", ".temp", ".scaled.mp4")):
+                return self.send_download(path)
             return self.send_error(404)
         return self.send_error(404)
 
@@ -855,6 +927,9 @@ if __name__ == "__main__":
     for _ in range(MAX_WORKERS):
         threading.Thread(target=worker, daemon=True).start()
 
+    if CLEAN_MIN > 0:
+        threading.Thread(target=janitor, daemon=True).start()
+        print(f"  Los archivos del servidor se borran a los {CLEAN_MIN} min (ya se guardaron en tu dispositivo).")
     if not IMPERSONATION and not sys.platform.startswith("win") and not os.environ.get("VIDBAJAR_HEALED"):
         print("  Falta curl_cffi (necesario para TikTok): instalando automáticamente…")
         threading.Thread(target=do_update, daemon=True).start()
