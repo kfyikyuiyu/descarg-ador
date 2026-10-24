@@ -43,6 +43,13 @@ def impersonation_ok():
     except Exception:
         return False
 
+def impersonation_reason():
+    try:
+        import curl_cffi
+        return f"curl_cffi {getattr(curl_cffi, '__version__', '?')} no es compatible con esta versión de yt-dlp"
+    except Exception:
+        return "curl_cffi no está instalado"
+
 def ytdlp_version():
     try:
         return imd.version("yt-dlp")
@@ -193,8 +200,8 @@ def friendly(e):
     low = m.lower()
     if "tiktok" in low and any(k in low for k in TT_ERR) or "unexpected response from webpage" in low:
         if not IMPERSONATION:
-            return ("TikTok necesita el componente «curl_cffi», que no está instalado o no es compatible. "
-                    "Pulsa ⬆ Actualizar (arriba a la derecha), espera a que termine y reinicia el programa.")
+            return ("TikTok necesita el componente «curl_cffi» (" + impersonation_reason() + "). "
+                    "Pulsa ⬆ Actualizar (arriba a la derecha) y espera: se instala y se reinicia solo.")
         return ("TikTok bloqueó la solicitud (error 403: acceso denegado / pide verificación). Prueba, en este orden: "
                 "1) pulsa ⬆ Actualizar y reinicia el programa; "
                 "2) abre tiktok.com en Firefox, inicia sesión, cierra Firefox y pulsa Reintentar; "
@@ -483,7 +490,7 @@ def do_update():
     steps = [
         [py, "-m", "pip", "install", "-U", "--pre", "--no-deps", "--disable-pip-version-check", "yt-dlp"],
         [py, "-m", "pip", "install", "-U", "--prefer-binary", "--disable-pip-version-check",
-         "yt-dlp[default]", "imageio-ffmpeg"],
+         "yt-dlp[default,curl-cffi]", "imageio-ffmpeg"],
     ]
     try:
         for cmd in steps:
@@ -496,6 +503,15 @@ def do_update():
                 UPDATE.update(state="error", msg="No se pudo actualizar: " + tail[0][:200])
                 return
         new = ytdlp_version()
+        if not sys.platform.startswith("win"):
+            UPDATE.update(state="done", msg=f"Actualizado a yt-dlp {new}. Reiniciando el programa… (unos segundos)")
+            os.environ["VIDBAJAR_HEALED"] = "1"          # evita bucles de reinicio
+            time.sleep(2.5)                              # da tiempo a que la página lea el mensaje
+            try:
+                sys.stdout.flush()
+            except Exception:
+                pass
+            os.execv(sys.executable, [sys.executable] + sys.argv)
         UPDATE.update(state="done", msg=f"Actualizado a yt-dlp {new}. Cierra la ventana negra y vuelve a abrir el programa.")
     except Exception as e:
         UPDATE.update(state="error", msg="No se pudo actualizar: " + str(e)[:200])
@@ -838,6 +854,10 @@ def make_server():
 if __name__ == "__main__":
     for _ in range(MAX_WORKERS):
         threading.Thread(target=worker, daemon=True).start()
+
+    if not IMPERSONATION and not sys.platform.startswith("win") and not os.environ.get("VIDBAJAR_HEALED"):
+        print("  Falta curl_cffi (necesario para TikTok): instalando automáticamente…")
+        threading.Thread(target=do_update, daemon=True).start()
 
     server, host = make_server()
     port = server.server_address[1]

@@ -608,6 +608,7 @@ async function refresh(){
     const res = await fetch("/api/queue");
     if(!res.ok) throw new Error("HTTP " + res.status);
     d = await res.json();
+    if(failCount >= 3 && typeof checkStatus === "function") setTimeout(checkStatus, 500);
     failCount = 0;
   }catch(e){
     if(++failCount >= 3) say("Se perdió la conexión con el programa. ¿Sigue abierta la ventana negra?", "err");

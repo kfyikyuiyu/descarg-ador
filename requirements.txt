@@ -1,2 +1,2 @@
-yt-dlp[default]>=2025.11.12
+yt-dlp[default,curl-cffi]>=2025.11.12
 imageio-ffmpeg>=0.5.1
