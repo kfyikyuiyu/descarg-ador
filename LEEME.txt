@@ -12,6 +12,15 @@ Arriba eliges la calidad por defecto: Mejor, 8K, 4K, 2K, Full HD, HD, 480p, 360p
 Cada video de la lista tiene su propio selector con las calidades REALES que ofrece ese video
 (y su tamaño aproximado), así puedes subirla o bajarla antes de descargar.
 Si el video no llega a la calidad pedida (por ejemplo 4K), baja a la mejor disponible.
+ESCALAR A 4K / LA CALIDAD QUE ELIJAS
+-----------------------------------
+Muchos videos (TikTok, por ejemplo) solo existen en baja resolución: no hay 4K real que descargar.
+Con la casilla «⬆ Escalar si el original es menor» (activada por defecto) el programa agranda el video
+a la resolución que elegiste (HD, Full HD, 2K o 4K) y CONSERVA la orientación: vertical sigue vertical
+y horizontal sigue horizontal. En la lista del video también aparece como «⬆ 4K (escalado)».
+Ojo: escalar no añade detalle real, solo hace el archivo más grande y tarda más. El máximo es 4K.
+Si no quieres escalar, desmarca la casilla y se descarga la resolución original.
+
 Para videos de más de 1080p se necesita mucho espacio y tiempo de descarga.
 
 NOVEDADES

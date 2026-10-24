@@ -47,8 +47,10 @@ textarea:focus{outline:none}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:6px}
 select,input[type=text],input[type=number]{font:inherit;font-size:.92rem;padding:9px 11px;border-radius:9px;border:1px solid #cfcfe2;background:#fff;color:#0f172a;max-width:100%}
 input[type=number]{width:80px}
-.pill{border:1px solid #cfcfe2;background:#fff;color:var(--ink);border-radius:9px;padding:9px 14px;cursor:pointer;font-size:.9rem;display:inline-flex;align-items:center;gap:6px}
-.pill:hover{background:#f4f4fb}
+.pill{border:1px solid #cfcfe2;background:#fff;color:#0f172a;border-radius:9px;padding:9px 14px;cursor:pointer;font-size:.9rem;display:inline-flex;align-items:center;gap:6px}
+.pill:hover{background:#f4f4fb;color:#0f172a}
+.pill input[type=checkbox]{accent-color:var(--p);width:16px;height:16px;margin:0}
+.pill:disabled{opacity:.55;cursor:not-allowed}
 .go{margin-left:auto;border:0;background:var(--p);color:#fff;font-weight:800;padding:13px 26px;border-radius:9px;cursor:pointer;box-shadow:0 8px 22px #5b3df55c;transition:.2s}
 .go:hover{transform:translateY(-1px);box-shadow:0 10px 26px #5b3df57a}
 .go:active{transform:translateY(0)}
@@ -178,6 +180,7 @@ main{max-width:960px;margin:22px auto;padding:0 16px}
         <option value="wav|0">WAV (sin pérdida)</option>
         <option value="flac|0">FLAC (sin pérdida)</option>
       </select>
+      <label class="pill" title="Si el video original tiene menos resolución que la elegida, se escala a esa resolución (conserva vertical/horizontal). Tarda más y el archivo pesa más."><input type="checkbox" id="upscale" checked> ⬆ Escalar si el original es menor</label>
       <button class="go" id="go" type="button">Agregar a la lista</button>
     </div>
   </div>
@@ -338,7 +341,7 @@ $("go").onclick = async () => {
   const r = await post("/api/add", {
     text: $("txt").value, kind, height,
     audio_fmt, audio_q: parseInt(audio_q)||192,
-    embed_thumb: true,
+    embed_thumb: true, upscale: $("upscale").checked,
   });
   if(r.error){ say(r.error, "err"); return; }
   $("txt").value = "";
@@ -424,7 +427,7 @@ function upd(w, i){
   r.subsBtn.classList.toggle("sbtn", !i.subs);
   r.subsBtn.textContent = i.subs ? "💬 CC ON" : "💬 CC";
 
-  const sig = JSON.stringify(i.qualities)+i.info+i.height;
+  const sig = JSON.stringify(i.qualities)+i.info+i.height+i.scale_to;
   if(r.sig !== sig){
     r.sig = sig; r.sel.replaceChildren();
     const opts = [["","Mejor calidad"]];
@@ -432,10 +435,14 @@ function upd(w, i){
       ? i.qualities.map(q => [String(q.h), lab(q.h, q.s) + (q.size?" · "+mb(q.size):"") + (q.fps>30?" · "+Math.round(q.fps)+"fps":"")])
       : (i.info==="loading" ? [] : [4320,2160,1440,1080,720,480,360,240].map(h=>[String(h),lab(h)]));
     list.forEach(o => opts.push(o));
+    if(i.qualities && i.qualities.length){
+      const maxS = Math.max(...i.qualities.map(q=>q.s||q.h));
+      [720,1080,1440,2160].filter(t=>t>maxS).forEach(t => opts.push(["up:"+t, "⬆ "+lab(t)+" (escalado)"]));
+    }
     if(i.height && !opts.some(o=>o[0]===String(i.height))) opts.push([String(i.height), lab(Number(i.height))]);
     opts.forEach(o => { const op = el("option",null,o[1]); op.value = o[0]; r.sel.append(op); });
   }
-  if(document.activeElement !== r.sel) r.sel.value = i.height || "";
+  if(document.activeElement !== r.sel) r.sel.value = i.scale_to ? "up:"+i.scale_to : (i.height || "");
   r.sel.style.display = i.kind==="audio" ? "none" : "";
   r.sel.disabled = i.info==="loading";
   r.asel.style.display = i.kind==="audio" ? "" : "none";
@@ -445,6 +452,7 @@ function upd(w, i){
   if(i.info==="loading") r.size.textContent = "Leyendo video…";
   else if(i.info==="fail") r.size.textContent = "⚠ " + (i.info_error||"Error");
   else if(i.kind==="audio") r.size.textContent = "";
+  else if(i.scale_to) r.size.textContent = "⬆ se escalará a " + lab(Number(i.scale_to)) + " (original " + (q ? q.s : "menor") + "p)";
   else if(q && q.size) r.size.textContent = "≈ " + mb(q.size);
   else r.size.textContent = "";
 
@@ -463,7 +471,7 @@ function upd(w, i){
   r.st.className = "s" + (err?" err":"");
   if(err) r.st.textContent = i.error;
   else if(i.state==="waiting") r.st.textContent = "En espera…";
-  else if(i.state==="processing") r.st.textContent = "Procesando y uniendo audio/video…";
+  else if(i.state==="processing") r.st.textContent = i.stage || "Procesando y uniendo audio/video…";
   else if(i.state==="downloading"){
     const dl = i.downloaded && i.total ? " · " + mb(i.downloaded) + " / " + mb(i.total) : "";
     r.st.textContent = "Descargando " + Math.round(i.pct||0) + "%" + dl +

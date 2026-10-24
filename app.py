@@ -1,4 +1,4 @@
-import importlib.metadata as imd, json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request, uuid, webbrowser
+import copy, importlib.metadata as imd, json, os, queue, re, shutil, subprocess, sys, threading, time, urllib.request, uuid, webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -15,7 +15,7 @@ HISTORY_FILE = os.path.join(HERE, "history.json")
 CONFIG_FILE = os.path.join(HERE, "config.json")
 
 # Runtimes JS que yt-dlp puede usar para resolver YouTube (si no están instalados, se ignoran).
-FAST = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20,
+FAST = {"quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True, "socket_timeout": 20,
         "concurrent_fragment_downloads": 8, "retries": 5, "fragment_retries": 5,
         "skip_unavailable_fragments": True, "ignoreerrors": False,
         "js_runtimes": {"deno": {}, "node": {}, "bun": {}, "quickjs": {}},
@@ -30,7 +30,7 @@ MAX_WORKERS = 8
 
 # Errores típicos de TikTok cuando pide verificación / bloquea la solicitud
 TT_ERR = ("unexpected response from webpage", "unable to extract webpage", "universal data",
-          "unable to extract challenge", "status code", "unable to extract aweme", "failed to parse json")
+          "unable to extract challenge", "http error 403", "status code", "unable to extract aweme", "failed to parse json")
 
 good = {"browser": None}
 UPDATE = {"state": "idle", "msg": ""}
@@ -130,9 +130,15 @@ def to_float(v):
     except Exception:
         return None
 
-def _try(url, opts, download):
+def _try(url, opts, download, jar_out=None):
     with YoutubeDL(opts) as y:
-        return y.extract_info(url, download=download)
+        info = y.extract_info(url, download=download)
+        if jar_out is not None:
+            try:
+                jar_out[:] = list(y.cookiejar)
+            except Exception:
+                pass
+        return info
 
 def base_opts():
     o = dict(FAST)
@@ -142,26 +148,26 @@ def base_opts():
         o["cookiesfrombrowser"] = (good["browser"],)
     return o
 
-def extract(url, extra=None, download=False):
+def extract(url, extra=None, download=False, jar_out=None):
     extra = extra or {}
     base = base_opts()
     tiktok = "tiktok.com" in url
     try:
-        return _try(url, {**base, **extra}, download)
+        return _try(url, {**base, **extra}, download, jar_out)
     except Exception as first:
         low = str(first).lower()
         if "cancelado" in low:
             raise
         if "youtu" in url and not any(k in low for k in NEEDS_LOGIN):
             try:
-                return _try(url, {**base, **extra, **YT_FALLBACK}, download)
+                return _try(url, {**base, **extra, **YT_FALLBACK}, download, jar_out)
             except Exception as e2:
                 if "cancelado" in str(e2).lower():
                     raise
         if tiktok and any(k in low for k in TT_ERR):
-            time.sleep(1.5)                      # TikTok a veces responde bien al segundo intento
+            time.sleep(2.5)                      # TikTok a veces responde bien al segundo intento
             try:
-                return _try(url, {**base, **extra}, download)
+                return _try(url, {**base, **extra}, download, jar_out)
             except Exception as e2:
                 if "cancelado" in str(e2).lower():
                     raise
@@ -170,7 +176,7 @@ def extract(url, extra=None, download=False):
             raise first
         for b in BROWSERS:
             try:
-                d = _try(url, {**FAST, **extra, "cookiesfrombrowser": (b,)}, download)
+                d = _try(url, {**FAST, **extra, "cookiesfrombrowser": (b,)}, download, jar_out)
                 good["browser"] = b
                 print("Usando la sesión de", b)
                 return d
@@ -189,7 +195,7 @@ def friendly(e):
         if not IMPERSONATION:
             return ("TikTok necesita el componente «curl_cffi», que no está instalado o no es compatible. "
                     "Pulsa ⬆ Actualizar (arriba a la derecha), espera a que termine y reinicia el programa.")
-        return ("TikTok bloqueó la solicitud (pide verificación). Prueba, en este orden: "
+        return ("TikTok bloqueó la solicitud (error 403: acceso denegado / pide verificación). Prueba, en este orden: "
                 "1) pulsa ⬆ Actualizar y reinicia el programa; "
                 "2) abre tiktok.com en Firefox, inicia sesión, cierra Firefox y pulsa Reintentar; "
                 "3) si usas VPN, apágala o cámbiala de país.")
@@ -236,9 +242,12 @@ def fetch_info(it):
         if it.get("cancel"):
             return
         try:
-            d = extract(clean_url(it["url"]), {"skip_download": True})
+            jar = []
+            d = extract(clean_url(it["url"]), {"skip_download": True}, jar_out=jar)
             if not d:
                 raise Exception("Sin información")
+            if d.get("_type") != "playlist":
+                it["_info"], it["_jar"], it["_info_time"] = d, jar, time.time()
             qs = sizes(d)
             it.update(
                 title=d.get("title") or it["url"],
@@ -256,6 +265,8 @@ def fetch_info(it):
             if it["kind"] == "video" and h.isdigit() and qs:
                 c = [q["h"] for q in qs if q["s"] <= int(h)]
                 it["height"] = str(max(c) if c else min(q["h"] for q in qs))
+                if it.get("upscale") and int(h) > max(q["s"] for q in qs):
+                    it["scale_to"] = min(int(h), MAX_SCALE)
             elif qs and not it.get("height"):
                 it["height"] = str(qs[0]["h"])
             it["info"] = "ok"
@@ -279,6 +290,52 @@ def release_slot():
         ACTIVE[0] -= 1
         SLOT.notify_all()
 
+MAX_SCALE = 2160     # límite del escalado (4K); H.264 no se reproduce bien por encima
+
+def probe_size(path):
+    try:
+        r = subprocess.run([FFMPEG, "-hide_banner", "-i", path], capture_output=True, text=True, timeout=60)
+        m = re.search(r"Video:.*?,\s*(\d{2,5})x(\d{2,5})", r.stderr)
+        return (int(m.group(1)), int(m.group(2))) if m else None
+    except Exception:
+        return None
+
+def scale_label(t):
+    return {2160: "4K", 1440: "2K", 1080: "Full HD", 720: "HD"}.get(t, f"{t}p")
+
+def upscale_file(it, path, target):
+    """Escala el video para que su lado corto sea `target`, conservando orientación y proporción."""
+    size = probe_size(path)
+    if not size:
+        return path
+    w, h = size
+    if min(w, h) >= target:
+        return path
+    vf = f"scale={target}:-2:flags=lanczos" if h >= w else f"scale=-2:{target}:flags=lanczos"
+    tmp = path + ".scaled.mp4"
+    it.update(state="processing", pct=100, stage=f"Escalando a {scale_label(target)} ({target}p)… puede tardar")
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-vf", vf,
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p",
+           "-c:a", "copy", "-movflags", "+faststart", "-f", "mp4", tmp]
+    p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    while True:
+        try:
+            _, err = p.communicate(timeout=0.5)
+            break
+        except subprocess.TimeoutExpired:
+            if it.get("cancel") or CANCEL.is_set():
+                p.kill()
+                p.communicate()
+                try: os.remove(tmp)
+                except Exception: pass
+                raise Exception("Cancelado por el usuario")
+    if p.returncode != 0:
+        try: os.remove(tmp)
+        except Exception: pass
+        raise Exception("ffmpeg no pudo escalar el video: " + (err or "").strip()[-150:])
+    os.replace(tmp, path)
+    return path
+
 def process(it):
     if not acquire_slot(it):
         drop(it["id"])
@@ -292,7 +349,7 @@ def process(it):
         release_slot()
 
 def run_download(it):
-    it.update(state="downloading", pct=0, error=None)
+    it.update(state="downloading", pct=0, error=None, stage=None)
     last_update = [0.0]
     start = time.time()
 
@@ -359,7 +416,24 @@ def run_download(it):
         opts["force_keyframes_at_cuts"] = True
 
     try:
-        d = extract(clean_url(it["url"]), opts, download=True)
+        d = None
+        info = it.get("_info")
+        if info and time.time() - it.get("_info_time", 0) < 20 * 60:
+            # Reutiliza lo que ya se obtuvo al agregar el enlace: así no se vuelve a pedir la página
+            # (TikTok bloquea con 403 las solicitudes repetidas).
+            try:
+                with YoutubeDL({**base_opts(), **opts}) as y:
+                    for c in it.get("_jar") or []:
+                        y.cookiejar.set_cookie(c)
+                    d = y.process_ie_result(copy.copy(info), download=True)
+            except Exception as e0:
+                if it.get("cancel") or CANCEL.is_set() or "cancelado" in str(e0).lower():
+                    raise
+                print("Reutilizar datos falló, se vuelve a pedir:", str(e0)[:150])
+                d = None
+        if d is None:
+            d = extract(clean_url(it["url"]), opts, download=True)
+        it.pop("_info", None); it.pop("_jar", None)
         if it.get("cancel"):
             raise Exception("Cancelado por el usuario")
         path = ""
@@ -367,6 +441,8 @@ def run_download(it):
             if f.get("filepath"):
                 path = f["filepath"]
                 break
+        if path and it["kind"] == "video" and it.get("scale_to") and os.path.exists(path):
+            upscale_file(it, path, int(it["scale_to"]))
         entry = {
             "title": d.get("title") or it["url"],
             "name": os.path.basename(path) if path else "",
@@ -441,7 +517,7 @@ QUEUE_KEYS = ("id", "url", "title", "state", "pct", "speed", "eta", "error", "ki
               "info", "info_error", "site", "uploader", "duration", "qualities",
               "subtitles", "webpage", "is_playlist", "playlist_count",
               "downloaded", "total", "audio_fmt", "audio_q", "embed_thumb", "subs", "sub_lang",
-              "trim_start", "trim_end")
+              "trim_start", "trim_end", "scale_to", "stage")
 
 def queue_snapshot():
     items = []
@@ -600,6 +676,8 @@ class H(BaseHTTPRequestHandler):
                     "id": iid, "url": u, "title": u, "state": "pending", "pct": 0,
                     "kind": "audio" if data.get("kind") == "audio" else "video",
                     "height": str(data.get("height", "") or ""),
+                    "upscale": bool(data.get("upscale", True)),
+                    "scale_to": None,
                     "info": "loading", "qualities": [],
                     "audio_fmt": data.get("audio_fmt", "mp3"),
                     "audio_q": aq,
@@ -631,10 +709,22 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/set":
             it = ITEMS.get(data.get("id"))
             if it:
-                for k in ("kind", "height", "audio_fmt", "audio_q", "embed_thumb", "subs", "sub_lang",
+                for k in ("kind", "audio_fmt", "audio_q", "embed_thumb", "subs", "sub_lang",
                           "trim_start", "trim_end"):
                     if k in data:
                         it[k] = data[k]
+                if "height" in data:
+                    val = str(data["height"] or "")
+                    qs = it.get("qualities") or []
+                    if val.startswith("up:") and qs:           # elegir una resolución mayor a la original
+                        try:
+                            it["scale_to"] = min(int(val[3:]), MAX_SCALE)
+                            it["height"] = str(qs[0]["h"])
+                        except Exception:
+                            pass
+                    else:
+                        it["height"] = val
+                        it["scale_to"] = None
             return self.send_json({"ok": True})
 
         if p == "/api/start_all":
